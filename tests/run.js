@@ -4773,7 +4773,7 @@ check('a stairwell climbs to a roof you can stand on, and a hostile follows you 
     g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
     const w = g.world, p = g.player;
     const step = (n, each) => { for (let f = 0; f < n; f++) { g.time += 1 / 30; p.health = 100; each?.(f); g.step(1 / 30); } };
-    const out = { stairs: w.stairs.length, walked: 0, stuck: [], held: 0, edges: 0, party: 0, partyHeld: 0, shots: [], climbs: 0, rooms: 0, follow: [], loose: {} };
+    const out = { stairs: w.stairs.length, walked: 0, stuck: [], held: 0, edges: 0, off: [], partyGrips: 0, party: 0, partyHeld: 0, shots: [], climbs: 0, rooms: 0, follow: [], loose: {} };
 
     // Nothing drawn across a shaft that holds nothing up. A ledge round the
     // building and a band near its top were slabs right through it, with no
@@ -4861,15 +4861,31 @@ check('a stairwell climbs to a roof you can stand on, and a hostile follows you 
         step(30);
         const onRoof = Math.abs(p.feetY - s.deck) < 0.05 && p.position.x > r0.minX && p.position.x < r0.maxX
           && p.position.z > r0.minZ && p.position.z < r0.maxZ;
+        // and nothing to pull up onto past a party wall, from the top of a
+        // jump against it: a pull-up reaches 1.8 m over the feet, and it
+        // used to search straight through the wall to the roof next door
+        if (party) {
+          const ax = dx ? (dx > 0 ? r0.maxX : r0.minX) - dx * 0.43 : cx, az = dz ? (dz > 0 ? r0.maxZ : r0.minZ) - dz * 0.43 : cz;
+          out.partyGrips += w.mantleTarget(ax, az, 0.42, s.deck + 1.25, dx, dz, 0.6, 1.8) ? 1 : 0;
+        }
         out.edges++;
         if (onRoof) out.held++;
+        else out.off.push({ at: [+sx.toFixed(1), +sz.toFixed(1)], dir: [dx, dz], party: !!party, end: [p.position.x, p.feetY, p.position.z].map((v) => +v.toFixed(2)) });
         if (party) { out.party++; if (onRoof) out.partyHeld++; }
       }
 
-      // a round fired straight down at the roof, clear of the bulkhead
-      const ray = new THREE.Raycaster(new THREE.Vector3(cx + 0.3, s.deck + 6, cz + 0.3), new THREE.Vector3(0, -1, 0), 0, 50);
+      // a round fired straight down at the roof, clear of the bulkhead and
+      // of the plant boxes, one of which can stand in the middle of a roof
       const q = s.shaft;
-      if (!(cx + 0.3 > q.minX - 0.5 && cx + 0.3 < q.maxX + 0.5 && cz + 0.3 > q.minZ - 0.5 && cz + 0.3 < q.maxZ + 0.5)) {
+      let aim = null;
+      for (const [ox, oz] of [[0.3, 0.3], [2.3, 0.3], [-1.7, 0.3], [0.3, 2.3], [0.3, -1.7], [2.3, 2.3], [-1.7, -1.7]]) {
+        const ax = cx + ox, az = cz + oz;
+        if (ax > q.minX - 0.5 && ax < q.maxX + 0.5 && az > q.minZ - 0.5 && az < q.maxZ + 0.5) continue;
+        if (w.groundHeight(ax, az, 0.3, Infinity, s.deck + 0.5) > s.deck + 0.05) continue;
+        aim = [ax, az]; break;
+      }
+      const ray = aim && new THREE.Raycaster(new THREE.Vector3(aim[0], s.deck + 6, aim[1]), new THREE.Vector3(0, -1, 0), 0, 50);
+      if (aim) {
         const hit = ray.intersectObjects(w.solids, false)[0];
         out.shots.push(hit ? +(hit.point.y - s.deck).toFixed(3) : null);
       }
@@ -4938,7 +4954,8 @@ check('a stairwell climbs to a roof you can stand on, and a hostile follows you 
   expect(r.stairs >= 6, `only ${r.stairs} stairwells on this seed`);
   expect(Object.keys(r.loose).length === 0, `something drawn across a stairwell holds nothing up, at heights ${JSON.stringify(r.loose)}`);
   expect(r.walked === r.stairs, `${r.stairs - r.walked} of ${r.stairs} stairwells could not be walked up: ${JSON.stringify(r.stuck.slice(0, 3))}`);
-  expect(r.edges >= r.stairs * 2 && r.held === r.edges, `walked off ${r.edges - r.held} of ${r.edges} roof edges`);
+  expect(r.edges >= r.stairs * 2 && r.held === r.edges, `walked off ${r.edges - r.held} of ${r.edges} roof edges: ${JSON.stringify(r.off.slice(0, 3))}`);
+  expect(r.partyGrips === 0, `from a jump at a party wall, ${r.partyGrips} of ${r.party} offer a ledge past it to pull up onto`);
   expect(r.party > 0 && r.partyHeld === r.party, `jumped ${r.party - r.partyHeld} of ${r.party} party walls`);
   expect(r.shots.length > 0 && r.shots.every((y) => y !== null && Math.abs(y) < 0.02),
     `a shot at a roof stopped at ${JSON.stringify(r.shots)} m from its deck`);
@@ -5403,11 +5420,14 @@ check('a marksman holds a window over the street, and a holdout is found upstair
         const ux = (b.cos * lx + b.sin * lz) * sgn, uz = (-b.sin * lx + b.cos * lz) * sgn;
         const hx = b.cx - ux * (short + 0.6), hz = b.cz - uz * (short + 0.6), px = b.cx + ux * (short + 5), pz = b.cz + uz * (short + 5);
         if (!open(hx, hz) || !open(px, pz)) continue;
-        // and a start the route field covers: beside a wreck parked half a
-        // metre off a wall it is a crevice in the field's shoulder with no
-        // open cell beside it, somewhere a holdout walking the field is
-        // never led
-        if (g.nav.solidAt(hx, hz)) continue;
+        // and a start the route field has an answer for, as `_route` asks
+        // it: beside a wreck parked half a metre off a wall it is a crevice
+        // with no routed cell next to it, somewhere a holdout walking the
+        // field is never led
+        const nav = g.nav, V = new (p.position.constructor)();
+        nav.update(px, pz, true);
+        if (!nav.heading(hx, hz, V) && ![0, 1, 2, 3, 4, 5, 6, 7].some((k) =>
+          nav.costAt(hx + Math.cos(k * Math.PI / 4) * nav.cell, hz + Math.sin(k * Math.PI / 4) * nav.cell) > 0)) continue;
         clear();
         p.reset(px, pz); p.maxHealth = p.health = 1e6;
         const h = g.spawnEnemy('holdout');
@@ -5465,7 +5485,7 @@ check('a marksman holds a window over the street, and a holdout is found upstair
       }
       row.done = !O.active && g.op.rescue > 0;
       row.took = t;
-      if (!row.done) row.at = [Math.round(h.pos.x), +h.pos.y.toFixed(1), Math.round(h.pos.z)];
+      if (!row.done) { row.at = [Math.round(h.pos.x), +h.pos.y.toFixed(1), Math.round(h.pos.z)]; row.pick = [Math.round(pick.x), Math.round(pick.z)]; }
       g.op.rescue = 0;
       if (O.active) O.finish(false);
     }
@@ -6130,14 +6150,15 @@ check('a seed still lays out the city it did', async (page) => {
   // generator changed with it, which moves these numbers too: a counter is
   // left out where it would wall a stair shop's back off, a shop that fills
   // its lot stands its furniture out in the room, a floor's furniture keeps
-  // 2 m off the shaft, and a fallen slab's tiers are flagged `slab`. Before
+  // 2 m off the shaft, a party wall stands 3.2 m, and a fallen slab's tiers
+  // are flagged `slab`. Before
   // it: 5183/1628/12 'ad9623cd' (4964 'cd6bf043') -1632891350, 3500/1302/11
   // '3d385c25' (3188 '4ac1ea6a') 1200834133, 4704/1698/10 'cbb5835e' (4370
   // '6eb20fbc') -1828098447.
   const want = {
-    1: { boxes: 7724, solids: 2754, perches: 32, fp: 'a8ffa1c1', placed: 7040, fpPlaced: 'e7511e20', mark: 220091255 },
-    7: { boxes: 6966, solids: 2670, perches: 26, fp: 'eeb3f015', placed: 6435, fpPlaced: '5a88de2e', mark: 157064770 },
-    20260101: { boxes: 6739, solids: 2660, perches: 17, fp: '2cb13e75', placed: 6318, fpPlaced: '7e8dc140', mark: 475216655 },
+    1: { boxes: 7724, solids: 2754, perches: 32, fp: 'ccb93635', placed: 7040, fpPlaced: '25801dfc', mark: 220091255 },
+    7: { boxes: 6966, solids: 2670, perches: 26, fp: 'f1381805', placed: 6435, fpPlaced: '311f203e', mark: 157064770 },
+    20260101: { boxes: 6739, solids: 2660, perches: 17, fp: '77a1d141', placed: 6318, fpPlaced: '5c4a4264', mark: 475216655 },
   };
   // `mark` is where the seeded stream stands at the end of boot, which is
   // the stream every spawn is picked from. Every pass that changed how

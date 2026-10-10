@@ -127,9 +127,12 @@ export class NavGrid {
     };
     for (const b of this.world.boxes) {
       // A heap of rubble is climbed, not walked round: every tier of it rises
-      // less than a step, so it is ground here, the way a kerb is.
+      // less than a step, so it is ground here, the way a kerb is. A fallen
+      // slab is not: its tiers rise 0.6 m apiece, a wall a hostile's
+      // avoidance turns it from and a holdout, which has none, stood
+      // against for a minute on the larger sector.
       // And a ceiling — the floors over an open ground floor — is walked under.
-      if (b.top <= STEP || b.heap || b.base > 2.6) continue;
+      if (b.top <= STEP || (b.heap && !b.slab) || b.base > 2.6) continue;
       // cells the solid overlaps: floor of each edge, since cell i covers
       // [origin + i*cell, origin + (i+1)*cell)
       fill(

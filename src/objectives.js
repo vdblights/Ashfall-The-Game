@@ -406,7 +406,10 @@ export class ObjectiveSystem {
       if (Math.hypot(floor.door.x - body.pos.x, floor.door.z - body.pos.z) < 0.6) return true;
       Enemy.prototype._floorWay.call(body, V1, floor.door.x, floor.door.z, s, floor, w);
       body.pos.x += V1.x * 0.2; body.pos.z += V1.z * 0.2;
-      if (w.blocked(body.pos.x, body.pos.z, body.radius, floor.y + 0.9)) return false;
+      // anything over a step is in the way, not anything over the waist: a
+      // floor's crate is 0.72 m and its table 0.78, and asked from 0.9 the
+      // walk went through both and sited a holdout behind one
+      if (w.blocked(body.pos.x, body.pos.z, body.radius, floor.y + 0.55)) return false;
     }
     return false;
   }

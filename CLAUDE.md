@@ -98,7 +98,9 @@ These each cost real debugging time. Changing them needs a reason.
   blank wall, a floor's furniture kept 2 m off the shaft (a crate at its
   corner stuck a juggernaut walking back to the door), a second stair post
   found on a closer ring where a stair door opens 4 m from the shopfront,
-  and a pull-up that stops at a wall standing off the ground (next item).
+  a party wall raised to 3.2 m and a pull-up that stops at it (both in the
+  invariants below), a holdout's walk off its floor asked at a step's
+  height, and a fallen slab baked as a wall in the route field.
   The other half were check setups that had only ever met the old seeds'
   subjects: a ledge sampler that took the fountain's rim, a pavement
   audit that took litter, a deck sampler that took a broken ruin pier,
@@ -400,11 +402,14 @@ These each cost real debugging time. Changing them needs a reason.
   wall test passes `feet + maxRise + 0.5`, or the roof over a shop is a
   wall in front of every crate in it (0 of 6 shops' crates climbable with
   it left at `Infinity`). **The parapet is waist-high onto a street and
-  2.2 m where another building of the lot stands a metre off** (`party` in
-  `buildTower`) — and it holds only because a pull-up stops at it (see the
-  mantle invariant): a jump's apex is 1.25 m and a pull-up reaches 1.8 over
-  the feet, so its height alone stops nothing over 3 m. The roof next door
-  is one jump away, its colliders are its block's top 0.8 m under the cap you see, and
+  3.2 m where another building of the lot stands a metre off** (`party` in
+  `buildTower`), and it takes two things to hold. Its height stops a jump
+  from the highest thing on the roof: a jump's apex is 1.25 m, a plant box
+  1.35 m, and at the 2.2 m it was a run onto a plant box and a jump off it
+  cleared the wall on the larger sector. And a pull-up stops at it (see the
+  mantle invariant), because a pull-up reaches 1.8 m over the feet and used
+  to grip the roof next door through it. The roof next door is one jump
+  away, its colliders are its block's top 0.8 m under the cap you see, and
   its roof furniture is decoration you walk through. **Everything on a
   stair roof that was decoration goes** — `roofFurniture` and `fireEscape`
   are skipped on it, the plant boxes are decks — and the block loses its
@@ -714,7 +719,10 @@ These each cost real debugging time. Changing them needs a reason.
   you on it, and only rubble — a kerb or a roof edge still needs the floor
   under your feet. Walking each heap's summit from four sides: 116 of 151
   reached against 46. What is left is the leaning slabs, whose tiers rise
-  0.6 m apiece over the street: a wall, walked round. A heap that takes
+  0.6 m apiece over the street: a wall, walked round. Their tiers carry
+  `slab`, and the route field bakes them as the walls they are, because a
+  holdout has no avoidance to be turned by: on the larger sector the field
+  led one into a slab between it and its pickup, and it stood there. A heap that takes
   your weight in a shop's doorway puts your head in the floor over it, and
   one shop on seed 1 could not be walked into; rubble in a doorway's
   approach is cleared the way a perch's is (7, 6 and 6 heaps on the pinned
@@ -1679,8 +1687,10 @@ These each cost real debugging time. Changing them needs a reason.
   Every other rescue (`rescues` in `objectives.js`, so the first is a shop)
   puts the holdout on a floor (`floorSite`), sited only where the walk to
   the landing door the hostiles' way (`Enemy._floorWay`, run in
-  `_walksOut`) stays clear of furniture — without it a crate stack held one
-  on its floor for the whole escort; the handler says to find the stair;
+  `_walksOut`) stays clear of furniture, asked at a step's height over the
+  floor — without it a crate stack held one on its floor for the whole
+  escort, and asked from 0.9 m it walked through a 0.72 m crate and a 0.78 m
+  table and sited two holdouts behind them on the larger sector; the handler says to find the stair;
   it counts only from within 1.2 m of the floor's height, because floors
   can be 2.9 m apart and the shop's 3 m let the floor below cut it loose.
   Cut loose, it comes down by the stair walk (`_follow` calls
@@ -1721,8 +1731,9 @@ These each cost real debugging time. Changing them needs a reason.
   never reads one, so the search outward walked straight through it and
   gripped whatever was past it; on the larger sector a run and a jump at a
   2.2 m party wall came down on the roof next door, 2.95 m up and level
-  with nothing. The stairwell check walks at every roof edge, and one of 51
-  let you over with the stop taken out.
+  with nothing. The stairwell check asks `mantleTarget` from the top of a
+  jump against every party wall: 1 of 17 offers a ledge past it with the
+  stop taken out.
 - **An objective cue waits, it is not dropped.** Only one objective runs at a
   time, and their clocks outlive the wave that called them. Refusing a cue
   while one was up meant whole waves passed with no objective at all; cues now
@@ -2203,7 +2214,7 @@ end now draws twice the city, and culling it by distance would show it
 pop. Boot to a constructed game went 27 → 29 s in the harness, since the
 texture painting that dominates boot does not grow with the lots. Seed 1
 now has 34 shops (21), 17 stairwells (13), 43 floors (32), 32 perches
-(12), 173 crates and 7,724 colliders (5,183). `auto` sheds resolution and
+(12), 227 crates and 7,724 colliders (5,183). `auto` sheds resolution and
 a tier on a machine that cannot hold it, which is what it is for; if the
 larger sector costs a real machine more than that, the levers are a
 shorter far plane on low with the sky drawn separately, or thicker haze.
@@ -3442,8 +3453,7 @@ Suggested next work, in the order I would do it:
    could be a floor with a `surface`, the way a dropped kerb is, rather
    than a stack of tiers — the slab's own plane, and nothing between it
    and the ground under it walkable. Whether anyone wants to run up one is
-   a play question; until then the route field reads it as open and a
-   hostile is turned by its avoidance.
+   a play question; until then the route field bakes it as a wall.
 
 One piece of housekeeping that cannot be done from here: the merged branch
 `claude/project-memory` still exists on the remote. Deleting it returns 403

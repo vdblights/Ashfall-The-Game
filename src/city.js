@@ -3864,9 +3864,13 @@ export function buildCity(scene, painted = null) {
     for (const q of around(footprint, inner)) w.addDeck(q.minX, q.minZ, q.maxX, q.maxZ, D, h);
     for (const q of around(inner, s.outer)) w.addDeck(q.minX, q.minZ, q.maxX, q.maxZ, D, D - ROOF);
 
-    // the parapet, on the cap's overhang
+    // the parapet, on the cap's overhang. Over a building a metre off it is
+    // a party wall, and it has to stop a jump from the highest thing on the
+    // roof: a plant box is 1.35 m and a jump's apex 1.25 over that, so at
+    // 2.2 m a run onto a plant box and a jump off it cleared the wall, landed
+    // on the roof next door and ran off its far side into the street
     const PT = 0.3;
-    const wallH = (p) => (p ? 2.2 : 1.1);
+    const wallH = (p) => (p ? 3.2 : 1.1);
     block({ minX: capRect.minX, maxX: capRect.maxX, minZ: capRect.minZ, maxZ: footprint.minZ }, D, D + wallH(party.zm), conc);
     block({ minX: capRect.minX, maxX: capRect.maxX, minZ: footprint.maxZ, maxZ: capRect.maxZ }, D, D + wallH(party.zp), conc);
     block({ minX: capRect.minX, maxX: footprint.minX, minZ: footprint.minZ, maxZ: footprint.maxZ }, D, D + wallH(party.xm), conc);
