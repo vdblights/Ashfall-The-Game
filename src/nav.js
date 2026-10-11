@@ -125,23 +125,41 @@ export class NavGrid {
         for (let i = Math.max(0, i0); i <= Math.min(size - 1, i1); i++) blocked[row + i] = 1;
       }
     };
-    for (const b of this.world.boxes) {
-      // A heap of rubble is climbed, not walked round: every tier of it rises
-      // less than a step, so it is ground here, the way a kerb is.
-      // And a ceiling — the floors over an open ground floor — is walked under.
-      if (b.top <= STEP || b.heap || b.base > 2.6) continue;
+    const bake1 = (minX, maxX, minZ, maxZ) => {
       // cells the solid overlaps: floor of each edge, since cell i covers
       // [origin + i*cell, origin + (i+1)*cell)
       fill(
-        Math.floor((b.minX - origin) / cell), Math.floor((b.maxX - origin) / cell),
-        Math.floor((b.minZ - origin) / cell), Math.floor((b.maxZ - origin) / cell));
+        Math.floor((minX - origin) / cell), Math.floor((maxX - origin) / cell),
+        Math.floor((minZ - origin) / cell), Math.floor((maxZ - origin) / cell));
       // cells whose centre — origin + (i + 0.5) * cell — lies within a
       // shoulder of it
       fill(
-        Math.ceil((b.minX - CLEAR - origin) / cell - 0.5),
-        Math.floor((b.maxX + CLEAR - origin) / cell - 0.5),
-        Math.ceil((b.minZ - CLEAR - origin) / cell - 0.5),
-        Math.floor((b.maxZ + CLEAR - origin) / cell - 0.5));
+        Math.ceil((minX - CLEAR - origin) / cell - 0.5),
+        Math.floor((maxX + CLEAR - origin) / cell - 0.5),
+        Math.ceil((minZ - CLEAR - origin) / cell - 0.5),
+        Math.floor((maxZ + CLEAR - origin) / cell - 0.5));
+    };
+    for (const b of this.world.boxes) {
+      // A heap of rubble is climbed, not walked round: every tier of it rises
+      // less than a step, so it is ground here, the way a kerb is. A fallen
+      // slab is not: its tiers rise 0.6 m apiece, a wall a hostile's
+      // avoidance turns it from and a holdout, which has none, stood
+      // against for a minute on the larger sector.
+      // And a ceiling — the floors over an open ground floor — is walked under.
+      if (b.top <= STEP || (b.heap && !b.slab) || b.base > 2.6) continue;
+      // And a door is open to the field, because a hostile that reaches a
+      // shut one opens it; what is baked is the leaf where it stands open,
+      // square to the wall at its jamb, or the field leads a holdout — which
+      // has no avoidance — into the back of it and leaves it there. A shop's
+      // walls are square, so that is a box. A door is only hung where there
+      // is a walkway round its open leaves (`registerDoors`), or the
+      // shoulder round a leaf beside a stairwell cut a 10 m shop in two.
+      if (b.door) {
+        const d = b.door, ex = d.hx + d.nx * d.width, ez = d.hz + d.nz * d.width, t = 0.06;
+        bake1(Math.min(d.hx, ex) - t, Math.max(d.hx, ex) + t, Math.min(d.hz, ez) - t, Math.max(d.hz, ez) + t);
+        continue;
+      }
+      bake1(b.minX, b.maxX, b.minZ, b.maxZ);
     }
   }
 

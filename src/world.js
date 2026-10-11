@@ -158,6 +158,44 @@ export class World {
   }
 
   /**
+   * Register a door's leaf: a turned box that swings about a hinge. `t` is
+   * the way the closed leaf runs from its hinge across the doorway and `n`
+   * the way it swings open, both unit and square to each other. The box's
+   * min/max is everything the leaf can sweep, so the index — built once —
+   * finds it at every angle and every reader that only wants a bound stays
+   * right; every reader that wants the leaf itself transforms into its frame,
+   * which `setLeaf` moves. A door is a collider like any other box, to a body,
+   * a sight line and a grenade, only one that turns.
+   */
+  addDoorLeaf(hx, hz, tx, tz, nx, nz, width, top, base = 0, thick = 0.12) {
+    const xs = [hx, hx + tx * width, hx + nx * width, hx + (tx + nx) * width];
+    const zs = [hz, hz + tz * width, hz + nz * width, hz + (tz + nz) * width];
+    const pad = thick;
+    const b = {
+      minX: Math.min(...xs) - pad, maxX: Math.max(...xs) + pad,
+      minZ: Math.min(...zs) - pad, maxZ: Math.max(...zs) + pad, top, base,
+      cx: 0, cz: 0, hx: width / 2, hz: thick / 2, cos: 1, sin: 0,
+      door: { hx, hz, tx, tz, nx, nz, width, angle: 0 },
+    };
+    this.boxes.push(b);
+    this.setLeaf(b, 0);
+    return b;
+  }
+
+  /** Swing a leaf to `angle` (0 shut, π/2 open) about its hinge. */
+  setLeaf(b, angle) {
+    const d = b.door;
+    d.angle = angle;
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const dx = d.tx * c + d.nx * s, dz = d.tz * c + d.nz * s;
+    b.cx = d.hx + dx * d.width / 2;
+    b.cz = d.hz + dz * d.width / 2;
+    // local X along the leaf: lx = cos * rx - sin * rz, as `addRotatedBox`
+    b.cos = dx;
+    b.sin = -dz;
+  }
+
+  /**
    * Index the boxes on a coarse grid, once the city is built.
    *
    * Every query used to walk the whole box list, which was fine at 770
@@ -367,6 +405,12 @@ export class World {
     // to grab one now, further to ask whether there is one to walk up to
     for (let d = radius + 0.1; d <= radius + reach; d += 0.18) {
       const gx = x + nx * d, gz = z + nz * d;
+      // A wall standing off the ground — a parapet on a roof, the sill of a
+      // building's upper floor — is a box `groundHeight` never reads, so the
+      // search walked straight through one and gripped whatever was past it:
+      // on the larger sector, a party wall and the roof next door beyond it.
+      // Past a wall there is no lip to reach.
+      if (this._wallAt(gx, gz, grip, feet + minRise, feet + 1.0)) return null;
       const top = this.groundHeight(gx, gz, grip, feet + maxRise);
       if (top < feet + minRise) continue;
       // anything taller here means we are staring at a wall, not gripping a
@@ -389,6 +433,23 @@ export class World {
       return { top, land, x: lx, z: lz };
     }
     return null;
+  }
+
+  /**
+   * Whether a box off the ground and not a deck — a wall standing on a roof
+   * or a floor — stands at (x, z), within `radius`, with its underside no
+   * higher than `chest` and its top over `above`: something in the way of a
+   * pull-up that is not something to pull up onto.
+   */
+  _wallAt(x, z, radius, above, chest) {
+    for (const b of near(this, x - radius, z - radius, x + radius, z + radius)) {
+      if (!b.base || b.deck || b.base > chest || b.top <= above) continue;
+      const rx = x - b.cx, rz = z - b.cz;
+      const lx = b.cos * rx - b.sin * rz, lz = b.sin * rx + b.cos * rz;
+      const dx = Math.max(0, Math.abs(lx) - b.hx), dz = Math.max(0, Math.abs(lz) - b.hz);
+      if (dx * dx + dz * dz < radius * radius) return true;
+    }
+    return false;
   }
 
   /**
@@ -490,7 +551,8 @@ export class World {
       // the corners of the AABB that stick out past the prop. Confirm against
       // the footprint before calling the line blocked, or a container at an
       // angle gives cover from a metre to the side of itself.
-      if (box.sin !== 0 && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
+      // A door's bound is everything it sweeps, so a door always asks.
+      if ((box.sin !== 0 || box.door) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
 
       return false;
     }

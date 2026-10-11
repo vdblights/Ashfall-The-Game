@@ -134,6 +134,7 @@ scale had no initial value.
 | `1`–`4`, `Q`, mouse wheel | Switch weapons |
 | `G` | Frag grenade — **hold to cook**, release to throw |
 | `F` / `V` | Melee bash |
+| `E` | Open or close a door in front of you |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
@@ -322,7 +323,7 @@ did for it.
 ## Objectives
 
 Wave survival on its own rewards standing still in the best cover you can
-find, and the other 200 m of city may as well not exist. So most waves put
+find, and the other 270 m of city may as well not exist. So most waves put
 something worth having at the far end of it and start a clock.
 
 | Objective | Where | What it asks | What it pays |
@@ -408,6 +409,14 @@ turns the corner. Every piece of ironwork asks the ground under each of its
 corners and is only laid where they agree, so nothing hangs off a kerb. It costs the layout nothing: like the rest of the
 decorative pass it draws from its own generator, so a seed lays out exactly
 the city it did before.
+
+The sector is not the edge of the world. Past its wall the city carries
+on along the same street grid: blocks of every facade, some gutted to a
+shell, some with their tops broken off, thinning out over waste ground that
+rolls away to a line of hills, with rubble heaped against the outside of the
+wall. From any roof you look out over a city the haze takes away, rather
+than over a strip of asphalt and then sky. None of it can be reached or
+shot, so none of it is anything but a picture.
 
 A window is a hole in the wall, not a picture of one. The facade's own
 shader knows where every opening is — the same four-by-three grid the walls
@@ -660,6 +669,14 @@ Stepping up a kerb or a stair moves your feet at once and eases the view up
 after them, so a street crossing is not a jolt — and at a zebra there is no
 step at all, because the kerb is dropped and you walk up the ramp you see.
 
+Some shop doorways — about one in six, wherever there is room for them to
+swing — hang a pair of painted steel doors that open into the room. Shut, a
+door is a wall: it stops you, a sight line, a round and a grenade. `E` opens
+or closes the one in front of you, and it will not shut on anyone standing
+in it. A door hides you; it does not hold anything out. A hostile that walks
+up to a shut door opens it and comes through, so shutting yourself in buys
+you a moment of not being seen and the sound of it opening.
+
 ## How it is put together
 
 ```
@@ -740,7 +757,8 @@ A few notes on the implementation:
   used to cost, so it can be rebuilt out of fourteen shapes instead of seven
   boxes and stay parked in the same street. A check pins three seeds to a
   fingerprint of every collider's position and turn.
-- **The city is generated per session.** A 6×6 grid of lots is filled with
+- **The city is generated per session.** An 8×8 grid of lots, 272 m on a
+  side, is filled with
   towers, gutted low ruins and rubble lots, then dressed with wrecked cars,
   shipping containers, barricades, streetlights and burning barrels — and the
   blocks themselves with base courses, pilasters, roof tanks and bulkheads,

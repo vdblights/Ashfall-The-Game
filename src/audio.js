@@ -245,6 +245,22 @@ class Audio {
     this._tone('sine', 70, 45, 0.09, 0.10, 0.34);   // boots hitting the deck
   }
 
+  /**
+   * A steel door: hinges dragging as it swings, and the leaf meeting its
+   * stop — the slam when it shuts is the louder of the two. Placed where the
+   * door is, like every other sound from somewhere.
+   */
+  door(at = null, shutting = false) {
+    if (!this.ctx) return;
+    const out = this._out(at);
+    this._noise(0.32, 'bandpass', 900, 3.5, 0.05, 1500, out);          // the hinge
+    this._tone('sawtooth', 210, 160, 0.22, 0.025, 0, out);
+    if (shutting) {
+      this._noise(0.12, 'lowpass', 600, 0.8, 0.22, 200, out);
+      this._tone('sine', 85, 55, 0.14, 0.18, 0.02, out);              // the leaf on its stop
+    }
+  }
+
   /** Grenade: pin, bounce, and the blast itself. */
   pinPull() { if (this.ctx) { this._tone('square', 1200, 700, 0.05, 0.10); this._noise(0.05, 'highpass', 3000, 1, 0.08); } }
 
