@@ -314,6 +314,88 @@ function ringGeo(w, h, d, wall, tile = TILE.concrete) {
   ]);
 }
 
+/** Paint a part's vertices one colour, for a material that wears `vertexColors`. */
+function paint(g, [r, gr, b]) {
+  const c = new Float32Array(g.attributes.position.count * 3);
+  for (let i = 0; i < c.length; i += 3) { c[i] = r; c[i + 1] = gr; c[i + 2] = b; }
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return g;
+}
+
+/** What is left on a shop's shelves: card, faded print and tins, by a hash. */
+const STOCK = [[0.62, 0.48, 0.32], [0.55, 0.42, 0.3], [0.72, 0.64, 0.5], [0.42, 0.5, 0.62],
+  [0.66, 0.34, 0.28], [0.4, 0.55, 0.38], [0.84, 0.82, 0.76], [0.5, 0.5, 0.52]];
+
+/**
+ * A shelving unit, `w` x `h` x `d` about its middle, long along whichever of
+ * `w` and `d` is longer: uprights at every bay, shelf boards, a divider down
+ * the middle, a kick plate, and what was left on the shelves — boxes and
+ * tins of every size, with gaps where the rest was taken. `face` says which
+ * side of the divider stock stands on (+1 or -1 along the short axis, 0 for
+ * both): a unit against a wall shows one side. It was a box the size of the
+ * unit, and every shop's shelving read as a dark slab. One geometry, so a
+ * unit is still one mesh to the bake; it fills the box it collides as and
+ * no more, and each part carries its own shade (`paint`) for the bake to
+ * keep (`keepShade`).
+ */
+function shelvingGeo(w, h, d, seed, face = 0) {
+  const M = TILE.metal, alongX = w >= d, L = alongX ? w : d, D = alongX ? d : w;
+  const parts = [], P = [0.92, 0.9, 0.86], dark = [0.45, 0.45, 0.44];
+  const add = (gw, gh, gd, x, y, z, c) => parts.push(paint(boxGeo(gw, gh, gd, M).translate(x, y, z), c));
+  const y0 = -h / 2;
+  const bays = Math.max(1, Math.round(L / 1.1));
+  for (let i = 0; i <= bays; i++) {
+    const x = -L / 2 + 0.025 + (L - 0.05) * i / bays;
+    for (const s of [-1, 1]) add(0.05, h, 0.05, x, 0, s * (D / 2 - 0.025), P);
+  }
+  add(L - 0.06, h - 0.06, 0.02, 0, 0, 0, dark);
+  const n = Math.max(3, Math.round(h / 0.42));
+  const gap = (h - 0.16) / (n - 1);
+  for (let k = 0; k < n; k++) add(L - 0.04, 0.03, D - 0.02, 0, y0 + 0.1 + k * gap, 0, P);
+  for (const s of [-1, 1]) add(L - 0.06, 0.1, 0.02, 0, y0 + 0.05, s * (D / 2 - 0.03), dark);
+  // stock on every shelf but the top one, on the sides that show
+  let i = 0;
+  for (let k = 0; k < n - 1; k++) {
+    const floor = y0 + 0.1 + k * gap + 0.015, room = gap - 0.04;
+    for (const s of face ? [face] : [-1, 1]) {
+      let x = -L / 2 + 0.06;
+      while (x < L / 2 - 0.1) {
+        const h1 = hash2(seed + i, k * 7 + s, 401), h2 = hash2(seed + i, k * 7 + s, 402), h3 = hash2(seed + i, k * 7 + s, 403);
+        i++;
+        if (h1 < 0.32) { x += 0.15 + h2 * 0.45; continue; }       // a gap where it was taken
+        const bw = Math.min(L / 2 - 0.06 - x, 0.12 + h2 * 0.26);
+        if (bw < 0.08) break;
+        const bh = Math.min(room * 0.9, 0.1 + h3 * 0.26), bd = (D / 2 - 0.05) * (0.55 + 0.4 * h2);
+        add(bw, bh, bd, x + bw / 2, floor + bh / 2, s * (0.02 + bd / 2), STOCK[Math.floor(h3 * 997) % STOCK.length]);
+        x += bw + 0.015;
+      }
+    }
+  }
+  const g = mergeIntoOne(parts);
+  return alongX ? g : g.rotateY(Math.PI / 2);
+}
+
+/**
+ * A shop counter, `w` x `h` x `d` about its middle, long along whichever is
+ * longer: a top with an overhang, ends, a front panel on the customer's side
+ * (`front`, +1 or -1 along the short axis) with a kick plate under it, and
+ * a shelf inside on the staff's side. It was a box. One geometry, inside the
+ * box it collides as and no further.
+ */
+function counterGeo(w, h, d, front) {
+  const M = TILE.metal, alongX = w >= d, L = alongX ? w : d, D = alongX ? d : w;
+  const parts = [], body = [0.86, 0.84, 0.8], top = [0.6, 0.46, 0.33], dark = [0.4, 0.4, 0.4];
+  const add = (gw, gh, gd, x, y, z, c) => parts.push(paint(boxGeo(gw, gh, gd, M).translate(x, y, z), c));
+  const y0 = -h / 2;
+  add(L, 0.04, D, 0, h / 2 - 0.02, 0, top);
+  for (const s of [-1, 1]) add(0.03, h - 0.04, D - 0.06, s * (L / 2 - 0.015), -0.02, 0, body);
+  add(L - 0.06, h - 0.16, 0.03, 0, y0 + 0.12 + (h - 0.16) / 2, front * (D / 2 - 0.06), body);
+  add(L - 0.06, 0.1, 0.03, 0, y0 + 0.05, front * (D / 2 - 0.1), dark);
+  add(L - 0.06, 0.03, D - 0.2, 0, y0 + 0.35, -front * 0.04, body);
+  const g = mergeIntoOne(parts);
+  return alongX ? g : g.rotateY(Math.PI / 2);
+}
+
 /**
  * A crate, `w` x `h` x `d` about its middle: boards in a frame. It was a box
  * wearing a container's painted folds, so a stack of crates in a shop read
@@ -519,6 +601,13 @@ function occlusionField(world, extent, cell = 1.6) {
  * the room it keeps under half. The faces themselves, which are the
  * building's outside, are left alone. The sun is already the shadow map's.
  */
+/** How far a point is from an opening: the segment across it, in plan. */
+function toOpening(o, x, z) {
+  const tx = -o.nz, tz = o.nx, rx = x - o.x, rz = z - o.z;
+  const along = Math.max(-o.width / 2, Math.min(o.width / 2, rx * tx + rz * tz));
+  return Math.hypot(rx - tx * along, rz - tz * along);
+}
+
 function indoorField(world) {
   return (x, y, z) => {
     // a stairwell is lit by its two doors and nothing else, but not so dimly
@@ -527,13 +616,20 @@ function indoorField(world) {
       const c = s.inner;
       if (y < s.hut - 0.01 && x > c.minX - 0.01 && x < c.maxX + 0.01 && z > c.minZ - 0.01 && z < c.maxZ + 0.01) return 0.72;
     }
-    // a shop, or a floor over one, by how far in from its outer faces
+    // A shop, or a floor over one, by how far in from where the light comes
+    // in: its doorways and windows. It was how far in from any outer face,
+    // so a blank wall onto the next building counted as a window, and the
+    // back of every room sat at a third of the light whatever was beside it.
     for (const list of [world.rooms, world.floors]) {
       for (const c of list) {
         if (y > c.ceiling + 0.01 || y < c.floor - 0.4) continue;
-        const d = Math.min(x - c.minX, c.maxX - x, z - c.minZ, c.maxZ - z);
-        if (d <= 0.02) continue;
-        return 0.38 + 0.5 * Math.exp(-d / 1.6);
+        const face = Math.min(x - c.minX, c.maxX - x, z - c.minZ, c.maxZ - z);
+        if (face <= 0.02) continue;
+        let d = Infinity;
+        for (const o of c.doors) d = Math.min(d, toOpening(o, x, z));
+        for (const o of c.windows) d = Math.min(d, toOpening(o, x, z));
+        if (d === Infinity) d = face;
+        return 0.44 + 0.5 * Math.exp(-d / 2.6);
       }
     }
     return 1;
@@ -813,9 +909,11 @@ function smoothNoise(x, z, scale) {
  * forty times reads as wallpaper until something varies at a scale the tile
  * does not have.
  */
-function shadeGeometry(geo, tint, occlusion, mottle = 0, indoors = null) {
+function shadeGeometry(geo, tint, occlusion, mottle = 0, indoors = null, keep = false) {
   const pos = geo.attributes.position, nor = geo.attributes.normal;
   const col = new Float32Array(pos.count * 3);
+  // a part that carries its own shade (a shelf's stock) keeps it, under this
+  const own = keep ? geo.attributes.color : null;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const up = nor ? nor.getY(i) : 0;
@@ -837,6 +935,7 @@ function shadeGeometry(geo, tint, occlusion, mottle = 0, indoors = null) {
       const warm = (smoothNoise(x + 500, z - 500, 23) - 0.5) * mottle * 0.7;
       r *= drift * (1 + warm); g *= drift; b *= drift * (1 - warm);
     }
+    if (own) { r *= own.getX(i); g *= own.getY(i); b *= own.getZ(i); }
     col[i * 3] = Math.max(0, r * ao);
     col[i * 3 + 1] = Math.max(0, g * ao);
     col[i * 3 + 2] = Math.max(0, b * ao);
@@ -1746,7 +1845,7 @@ function bakeStatic(group, world) {
   reserve(() => {
     for (const m of meshes) {
       const geo = m.geometry.clone().applyMatrix4(m.matrixWorld);
-      shadeGeometry(geo, m.userData.tint || [1, 1, 1], occlusion, m.userData.mottle || 0, indoors);
+      shadeGeometry(geo, m.userData.tint || [1, 1, 1], occlusion, m.userData.mottle || 0, indoors, !!m.userData.keepShade);
       const key = `${materialIndex(perMaterial, m.material)}:${patchOf(geo)}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, b = { material: m.material, geos: [], cast: false, receive: false });
@@ -2526,6 +2625,16 @@ export const CITY_PAINT = [
         roughnessMap: metalSurface, metalnessMap: metalSurface,
         roughness: 1, metalness: 0.25, envMapIntensity: 0.7, vertexColors: true,
       });
+      // a shop's fittings — shelving and counters — in painted steel: paint,
+      // not metal, so they take the light a shaded room has (the doors'
+      // lesson), each part shaded by its own vertex colour
+      m.fitMat = new THREE.MeshStandardMaterial({
+        color: 0xa3a69c,
+        map: metalTex, normalMap: TEX.normalFrom(metalTex, 1.1, 'painted', 1),
+        normalScale: new THREE.Vector2(0.5, 0.5),
+        roughnessMap: metalSurface, metalnessMap: metalSurface,
+        roughness: 1, metalness: 0.2, envMapIntensity: 0.8, vertexColors: true,
+      });
       m.metalMat = new THREE.MeshStandardMaterial({
         color: 0x74797f,
         map: metalTex, normalMap: TEX.normalFrom(metalTex, 1.1, 'painted', 1),
@@ -2794,6 +2903,8 @@ function labelMaterials(m) {
   });
   label(m.metalMat, 'metal', TILE.metal);
   label(m.doorMat, 'door', TILE.metal); m.doorMat.userData.unbilled = true;
+  // billed as the metal it took over from, so the bake costs what it did
+  label(m.fitMat, 'fittings', TILE.metal); m.fitMat.userData.billAs = m.metalMat;
   label(m.glassMat, 'glass', TILE.glass);
   label(m.asphaltMat, 'asphalt', TILE.asphalt);
   label(m.paintMat, 'paint', TILE.paint);
@@ -2830,7 +2941,7 @@ export function buildCity(scene, painted = null) {
 
   const mats = painted || paintCity();
   labelMaterials(mats);
-  const { facades, infills, concreteMat, darkConcrete, debrisMat, terrainMat, doorMat, rusts, rustSheets, crates, metalMat, glassMat,
+  const { facades, infills, concreteMat, darkConcrete, debrisMat, terrainMat, doorMat, fitMat, rusts, rustSheets, crates, metalMat, glassMat,
     asphaltMat, paintMat, yellowMat, coverMat, grateMat, tactileMat, ironMat, gratingMat, railMat, carBodyMats, carRustMats, burntMat, tireMat, weedMat,
     waterMat, dampMat, litterMat, shardMat } = mats;
 
@@ -3884,9 +3995,9 @@ export function buildCity(scene, painted = null) {
     if (t) {
       const from = w.boxes.length;
       const top = 0.78;
-      w.solids.push(part(t.gw, 0.05, t.gd, t.px, KERB + top - 0.05, t.pz, metal, false, TILE.metal));
+      w.solids.push(part(t.gw, 0.05, t.gd, t.px, KERB + top - 0.05, t.pz, fitMat, false, TILE.metal));
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-        w.solids.push(part(0.06, top - 0.05, 0.06, t.px + sx * (t.gw / 2 - 0.08), KERB, t.pz + sz * (t.gd / 2 - 0.08), metal, false, TILE.metal));
+        w.solids.push(part(0.06, top - 0.05, 0.06, t.px + sx * (t.gw / 2 - 0.08), KERB, t.pz + sz * (t.gd / 2 - 0.08), fitMat, false, TILE.metal));
       }
       w.addBox(t.px - t.gw / 2, t.pz - t.gd / 2, t.px + t.gw / 2, t.pz + t.gd / 2, KERB + top);
       tag(from);
@@ -3912,7 +4023,7 @@ export function buildCity(scene, painted = null) {
       // boards, sides and a back panel against the wall, each something a
       // round stops at; a body meets the whole unit
       const along = u.gw > u.gd, f = u.face;
-      const add = (gw, gh, gd, px, py, pz) => w.solids.push(part(gw, gh, gd, px, py, pz, metal, false, TILE.metal));
+      const add = (gw, gh, gd, px, py, pz) => w.solids.push(part(gw, gh, gd, px, py, pz, fitMat, false, TILE.metal));
       for (const lv of [0.12, 0.62, 1.12]) add(u.gw, 0.04, u.gd, u.px, KERB + lv, u.pz);
       for (const k of [-1, 1]) {
         const px = u.px + (along ? k * (u.gw / 2 - 0.03) : 0), pz = u.pz + (along ? 0 : k * (u.gd / 2 - 0.03));
@@ -3960,10 +4071,12 @@ export function buildCity(scene, painted = null) {
     const r = (s) => hash2(Math.round(x * 3), Math.round(z * 3), 200 + s);
     const T = 0.35, PIER = 0.6, under = GROUND - SLAB;
     const part = (gw, gh, gd, px, py, pz, mat, collide, tile = TILE.concrete, opts = null) => {
-      const geo = mat.userData.crate ? crateGeo(gw, gh, gd, mat.userData.crate)
+      // `opts.geo`: a shape of its own, inside the same box
+      const geo = opts?.geo ? opts.geo : mat.userData.crate ? crateGeo(gw, gh, gd, mat.userData.crate)
         : boxGeo(gw, gh, gd, tile, opts || (gh > 1.5 ? { bands: 3 } : {}));
       if (mat.userData.crate) (w.crates ||= []).push({ x: px, y: py, z: pz, w: gw, h: gh, d: gd });
       const m = new THREE.Mesh(geo, mat);
+      if (opts?.geo) m.userData.keepShade = true;
       m.position.set(px, py + gh / 2, pz);
       m.castShadow = m.receiveShadow = true;
       m.userData.tint = tint;
@@ -4096,10 +4209,10 @@ export function buildCity(scene, painted = null) {
     // number in its room, so a stack of crates reads as one thing
     let pieceN = 0;
     const tag = (from) => { pieceN++; for (let k = from; k < w.boxes.length; k++) w.boxes[k].piece = pieceN; };
-    const furnish = (gw, gh, gd, px, py, pz, mat, tile = TILE.concrete) => {
+    const furnish = (gw, gh, gd, px, py, pz, mat, tile = TILE.concrete, shape = null) => {
       if (shaft && shaft.blocks(px, pz, gw, gd)) return;
       const from = w.boxes.length;
-      part(gw, gh, gd, px, py, pz, mat, true, tile);
+      part(gw, gh, gd, px, py, pz, mat, true, tile, shape && { geo: shape(gw, gh, gd, Math.round(px * 7) * 31 + Math.round(pz * 13)) });
       // a column is structure, not furniture: it keeps things clear of it
       // and does not count toward a room being furnished
       const column = gh >= under - 0.01;
@@ -4118,8 +4231,10 @@ export function buildCity(scene, painted = null) {
         for (const depth of [0, 0.38]) {
           const len = across * 0.42, off = (r(30 + depth * 10) - 0.5) * (across - len - 9);
           const at = -front.s * depth * deep;          // from the middle toward the back
-          if (front.along === 'x') furnish(len, 1.8, 0.9, x + off, KERB, z + at, metal, TILE.metal);
-          else furnish(0.9, 1.8, len, x + at, KERB, z + off, metal, TILE.metal);
+          // a gondola, stocked on both sides
+          const aisle = (gw, gh, gd, seed) => shelvingGeo(gw, gh, gd, seed, 0);
+          if (front.along === 'x') furnish(len, 1.8, 0.9, x + off, KERB, z + at, fitMat, TILE.metal, aisle);
+          else furnish(0.9, 1.8, len, x + at, KERB, z + off, fitMat, TILE.metal, aisle);
         }
       }
     } else if (Math.max(iw, id) > 15) {
@@ -4151,17 +4266,21 @@ export function buildCity(scene, painted = null) {
       const sealed = crowded || shaft && (front.along === 'x'
         ? shaft.blocks(x + open, z + front.s * inset, 3.2, 1.7) || shaft.blocks(x + off, z + front.s * inset, len + 3.2, 3.9)
         : shaft.blocks(x + front.s * inset, z + open, 1.7, 3.2) || shaft.blocks(x + front.s * inset, z + off, 3.9, len + 3.2));
+      // its panel faces the room, away from the shopfront it stands along
+      const desk = (gw, gh, gd) => counterGeo(gw, gh, gd, -front.s);
       if (sealed) { /* the stair stands where the counter would */ }
-      else if (front.along === 'x') furnish(len, 1.0, 0.7, x + off, KERB, z + front.s * inset, metal, TILE.metal);
-      else furnish(0.7, 1.0, len, x + front.s * inset, KERB, z + off, metal, TILE.metal);
+      else if (front.along === 'x') furnish(len, 1.0, 0.7, x + off, KERB, z + front.s * inset, fitMat, TILE.metal, desk);
+      else furnish(0.7, 1.0, len, x + front.s * inset, KERB, z + off, fitMat, TILE.metal, desk);
     }
     // shelving against the blank walls, and crates in the corners
     for (const f of faces) {
       if (f.street || r(50 + k++) < 0.3) continue;
       const len = Math.min(4, f.len - 2.4), off = (r(60 + k) - 0.5) * (f.len - len - 1.4);
       const inward = f.at - f.s * (T / 2 + 0.25);
-      if (f.along === 'x') furnish(len, 2.0, 0.45, x + off, KERB, inward, metal, TILE.metal);
-      else furnish(0.45, 2.0, len, inward, KERB, z + off, metal, TILE.metal);
+      // stocked on the side that faces the room
+      const wall = (gw, gh, gd, seed) => shelvingGeo(gw, gh, gd, seed, -f.s);
+      if (f.along === 'x') furnish(len, 2.0, 0.45, x + off, KERB, inward, fitMat, TILE.metal, wall);
+      else furnish(0.45, 2.0, len, inward, KERB, z + off, fitMat, TILE.metal, wall);
     }
     // crates against the blank walls, at either end of them
     let i = 0;
@@ -4177,6 +4296,44 @@ export function buildCity(scene, painted = null) {
     }
 
     furnishBare(w, pieces, faces, room, shaft, x, z, r, part, metal, tag);
+
+    // Strip lights on the ceiling, dead: rows of fittings down the room's
+    // long axis, a few gone and a few hanging by one end. Over everyone's
+    // head, so decoration (`userData.decor`, which is all the bake asks of
+    // it), built here in the room's reserve; none over a stairwell, whose
+    // flights would run through them.
+    {
+      const parts = [], housing = [0.9, 0.9, 0.88], lens = [1.15, 1.15, 1.1], dead = [0.55, 0.55, 0.53];
+      const iw2 = room.maxX - room.minX - 2 * T, id2 = room.maxZ - room.minZ - 2 * T, longX = iw2 >= id2;
+      const along = longX ? iw2 : id2, across = longX ? id2 : iw2;
+      const rows = Math.max(1, Math.round(across / 3.2)), cols = Math.max(1, Math.round(along / 3.6));
+      for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+          const a = (j + 0.5) / cols * along - along / 2, c = (i + 0.5) / rows * across - across / 2;
+          const px = x + (longX ? a : c), pz = z + (longX ? c : a);
+          const fx = longX ? 1.25 : 0.16, fz = longX ? 0.16 : 1.25;
+          if (shaft && shaft.blocks(px, pz, fx + 0.6, fz + 0.6)) continue;
+          const h = hash2(Math.round(px * 5), Math.round(pz * 5), 433);
+          if (h < 0.18) continue;                                   // gone
+          const fit = mergeIntoOne([
+            paint(boxGeo(1.25, 0.06, 0.16, TILE.metal), housing),
+            paint(boxGeo(1.19, 0.012, 0.11, TILE.metal).translate(0, -0.036, 0), h < 0.6 ? lens : dead),
+          ]);
+          // a few hang by one end, swung down from the other
+          if (h > 0.86) fit.translate(0.62, 0, 0).rotateZ(0.12 + (h - 0.86) * 1.4).translate(-0.62, 0, 0);
+          if (!longX) fit.rotateY(Math.PI / 2);
+          parts.push(fit.translate(px, under - 0.03, pz));
+        }
+      }
+      if (parts.length) {
+        const m = new THREE.Mesh(mergeIntoOne(parts), fitMat);
+        m.userData.decor = true;
+        m.userData.keepShade = true;
+        m.userData.tint = tint;
+        m.receiveShadow = true;
+        g.add(m);
+      }
+    }
 
     if (!shaft) return null;
     const stair = stairwell(g, w, shaft, x, z, bw, bd, h, conc, metal, tint, body, cap, party, under, footprint);
