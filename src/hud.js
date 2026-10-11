@@ -133,6 +133,8 @@ export class HUD {
       else if (ws.anyArmed) hint = 'OUT OF AMMO — SWITCH WEAPON';
       else hint = 'NO AMMO — [F] TO MELEE';
     }
+    // a door in reach, when nothing about the gun needs saying
+    if (!hint && game.doorHint) hint = game.doorHint;
     if (hint !== this._hint) {      // this runs every frame; do not churn the DOM
       this._hint = hint;
       this.el.reloadHint.textContent = hint;

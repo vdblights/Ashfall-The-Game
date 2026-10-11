@@ -834,7 +834,9 @@ check('a prop stops you where you can see it, not a metre before', async (page) 
 
     // a prop's own footprint, turned; a rubble heap's tiers are fitted to a shape, and
     // a thin fallen slab's grazing approach is not what this measures
-    const turned = g.world.boxes.filter((b) => b.sin !== 0 && !b.heap);
+    // (a door's leaf turns too, and stands in a doorway with the jambs either
+    // side of it; the door check walks into those)
+    const turned = g.world.boxes.filter((b) => b.sin !== 0 && !b.heap && !b.door);
     let nowWorst = 0, oldWorst = 0, nowSum = 0, oldSum = 0, n = 0;
     for (const b of turned) {
       const old = asAabb(b);
@@ -2340,7 +2342,7 @@ check('ambient occlusion darkens where things meet and leaves open ground alone'
       if (!m.isMesh) return;
       m.geometry.computeBoundingBox();
       const b = m.geometry.boundingBox;
-      if (!ground && b.max.y - b.min.y < 1e-3 && b.max.x - b.min.x > 300) { ground = m; return; }
+      if (!ground && b.max.y - b.min.y < 1e-3 && b.max.x - b.min.x > 250) { ground = m; return; }
       if (m.visible) { m.visible = false; hidden.push(m); }
     });
     let flat = null;
@@ -3218,6 +3220,182 @@ check('steel is folded, a ruin is broken at the top, and rubble is a heap', asyn
   return r;
 });
 
+check('some doorways have doors: shut, a door is a wall, and anyone can open one', async (page) => {
+  // A share of the shops' doorways carry a pair of steel leaves
+  // (`registerDoors`). Shut, a door has to be everything a wall is — to a
+  // body walking at it, a sight line, a round and a grenade — and opened
+  // with `E` it has to be nothing in the way, which means every one of those
+  // readers follows the leaf as it turns. A hostile that walks up to a shut
+  // door opens it, so the route field reads every doorway as open; a door
+  // will not shut on someone standing in it.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, w = g.world, p = g.player;
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    g.input.locked = true;
+    const tick = (s, each) => { for (let i = 0; i < Math.round(s * 30); i++) { g.time += 1 / 30; p.health = 100; g.step(1 / 30); each?.(); } };
+    const doorways = w.rooms.reduce((n, rm) => n + rm.doors.length, 0);
+    const ray = new THREE.Raycaster();
+    const shoot = (x, y, z, dx, dz, far) => {
+      ray.set(new THREE.Vector3(x, y, z), new THREE.Vector3(dx, 0, dz).normalize()); ray.far = far;
+      const hit = ray.intersectObjects(w.solids, false)[0];
+      return hit ? hit.distance : Infinity;
+    };
+    const out = { doors: g.doors.list.length, doorways, shutSeen: 0, shutShot: 0, swingBlind: 0, shutPast: 0, nadePast: 0, opened: 0,
+      openSeen: 0, openShot: 0, walkedIn: 0, shutOnBody: 0, routed: 0, hostiles: [] };
+    for (const d of g.doors.list) {
+      g.shutDoors();
+      for (const e of g.enemies) { e.group.visible = false; g._recycle(e); }
+      g.enemies.length = 0;
+      const tx = -d.nz, tz = d.nx, y = d.floor + 1.4;
+      const ox = d.x + d.nx * 2.2, oz = d.z + d.nz * 2.2;
+      const across = () => (p.position.x - d.x) * d.nx + (p.position.z - d.z) * d.nz;
+      // shut: sight and a round across it at three places along it
+      let seen = false, past = false;
+      for (const k of [-0.3, 0, 0.3]) {
+        const ax = ox + tx * k * d.width, az = oz + tz * k * d.width;
+        if (w.lineOfSight(ax, y, az, ax - d.nx * 4.2, y, az - d.nz * 4.2)) seen = true;
+        if (shoot(ax, y, az, -d.nx, -d.nz, 4.2) > 2.5) past = true;
+      }
+      if (seen) out.shutSeen++;
+      if (past) out.shutShot++;
+      // a shut door's box is its whole swing, which is clear floor: a sight
+      // line across the room a metre in from the door is not stopped by it
+      {
+        const ix = d.x - d.nx * 1.0, iz = d.z - d.nz * 1.0, h = d.width * 0.45;
+        if (!w.lineOfSight(ix - tx * h, y, iz - tz * h, ix + tx * h, y, iz + tz * h)) out.swingBlind++;
+      }
+      // a grenade thrown at it
+      const pos = new THREE.Vector3(ox, d.floor + 1, oz), vel = new THREE.Vector3(-d.nx * 9, 1, -d.nz * 9);
+      let deepest = Infinity;
+      for (let f = 0; f < 60; f++) {
+        vel.y -= 22 / 60; pos.addScaledVector(vel, 1 / 60); w.bounceSphere(pos, vel, 0.09);
+        deepest = Math.min(deepest, (pos.x - d.x) * d.nx + (pos.z - d.z) * d.nz);
+      }
+      if (deepest < -0.2) out.nadePast++;
+      // a body walking at it
+      p.reset(ox, oz); p.yaw = Math.atan2(d.nx, d.nz); p.pitch = 0;
+      g.input.keys.add('KeyW'); tick(2); g.input.keys.clear();
+      if (across() < 0.2) out.shutPast++;
+      // opened with E, from in front of it
+      p.reset(ox, oz); p.yaw = Math.atan2(d.nx, d.nz);
+      tick(0.1);
+      if (g.useDoor()) { tick(1); if (Math.abs(d.angle - Math.PI / 2) < 1e-6) out.opened++; }
+      let seen2 = true, shot2 = true;
+      for (const k of [-0.3, 0, 0.3]) {
+        const ax = ox + tx * k * d.width, az = oz + tz * k * d.width;
+        if (!w.lineOfSight(ax, y, az, ax - d.nx * 4.2, y, az - d.nz * 4.2)) seen2 = false;
+        if (shoot(ax, y, az, -d.nx, -d.nz, 4.2) < 4.1) shot2 = false;
+      }
+      if (seen2) out.openSeen++;
+      if (shot2) out.openShot++;
+      // and it will not shut on someone standing in it
+      p.reset(d.x + d.nx * 0.2, d.z + d.nz * 0.2); p.yaw = Math.atan2(d.nx, d.nz);
+      tick(0.1);
+      g.useDoor(); tick(1);
+      if (!d.open || d.angle < 1.5) out.shutOnBody++;
+      p.reset(ox, oz); p.yaw = Math.atan2(d.nx, d.nz);
+      g.input.keys.add('KeyW'); tick(2.5); g.input.keys.clear();
+      if (across() < -1) out.walkedIn++;
+      // the route field reads the doorway as open
+      if (!g.nav.solidAt(d.x - d.nx * 0.75, d.z - d.nz * 0.75)) out.routed++;
+    }
+    // a hostile in the shop, the door shut and the player in the street:
+    // it opens the door and comes out
+    for (const d of g.doors.list.slice(0, 6)) {
+      g.shutDoors();
+      for (const e of g.enemies) { e.group.visible = false; g._recycle(e); }
+      g.enemies.length = 0;
+      // the player out in the street, short of the perimeter wall: a shop on
+      // the sector's edge has its doors onto a 4 m strip in front of the wall
+      let k = 7;
+      while (k > 2.5 && Math.max(Math.abs(d.x + d.nx * k), Math.abs(d.z + d.nz * k)) > w.bounds - 1) k -= 0.5;
+      const qx = d.x + d.nx * k, qz = d.z + d.nz * k;
+      p.reset(qx, qz);
+      const e = g.spawnEnemy('scavenger');
+      const sx = d.x - d.nx * 3, sz = d.z - d.nz * 3;
+      e.pos.set(sx, w.groundHeight(sx, sz, 0.12, d.floor + 0.5), sz); e.group.position.copy(e.pos);
+      e.markWatchdog(p); e.alert(g.time, 0); e.postAfter = Infinity;
+      let outAt = null;
+      for (let f = 0; f < 30 * 12 && outAt === null; f++) {
+        g.time += 1 / 30; p.reset(qx, qz); p.health = 100; e.nextFire = Infinity; g.step(1 / 30);
+        if ((e.pos.x - d.x) * d.nx + (e.pos.z - d.z) * d.nz > 0.5) outAt = +(f / 30).toFixed(1);
+      }
+      out.hostiles.push({ outAt, opened: d.open });
+    }
+    g.shutDoors();
+    return out;
+  });
+  // Measured on seed 1: 13 doors on 72 shop doorways — a doorway needs room
+  // round its open leaves for one (`registerDoors`).
+  const n = r.doors;
+  expect(n >= 10 && n >= r.doorways * 0.12 && n <= r.doorways * 0.65, `${n} doors on ${r.doorways} doorways — some doorways, not none and not all`);
+  expect(r.shutSeen === 0, `${r.shutSeen} of ${n} shut doors let a sight line through`);
+  expect(r.shutShot === 0, `${r.shutShot} of ${n} shut doors let a round through`);
+  expect(r.swingBlind === 0, `${r.swingBlind} of ${n} shut doors block sight across the floor they swing over`);
+  expect(r.nadePast === 0, `${r.nadePast} of ${n} shut doors let a grenade through`);
+  expect(r.shutPast === 0, `${r.shutPast} of ${n} shut doors let the player walk through`);
+  expect(r.opened === n, `[E] opened ${r.opened} of ${n} doors`);
+  expect(r.openSeen === n && r.openShot === n, `open, ${n - r.openSeen} still block sight and ${n - r.openShot} still stop a round`);
+  expect(r.shutOnBody === 0, `${r.shutOnBody} of ${n} doors shut on the player standing in them`);
+  expect(r.walkedIn === n, `walked in through ${r.walkedIn} of ${n} open doors`);
+  expect(r.routed === n, `the route field reads ${r.routed} of ${n} doorways with doors as open`);
+  const came = r.hostiles.filter((h) => h.outAt !== null && h.opened);
+  expect(came.length === r.hostiles.length, `a hostile opened the door and came out of ${came.length} of ${r.hostiles.length} shops: ${JSON.stringify(r.hostiles)}`);
+  return { doors: `${n}/${r.doorways}`, hostiles: r.hostiles.map((h) => h.outAt) };
+});
+
+check('past the walls is the rest of the city, out to the hills, and none of it in reach', async (page) => {
+  // From a roof the perimeter wall was the edge of the world: 60 m of
+  // asphalt and then sky. Outside it now is waste ground rising to hills,
+  // the city's blocks carried on along its street grid, and rubble against
+  // the wall (`outskirts`), all decoration. This looks out from the top of
+  // every corner of the sector in sixteen directions, a little below the
+  // horizon, and asks each look to land on the landscape inside the camera's
+  // far plane; it asks for the blocks; it asks that the waste ground meets
+  // the street's level at the wall all round; and it asks that none of it
+  // is a collider or a raycast target, because nothing out there can be
+  // reached.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, w = g.world, O = g.outskirts;
+    const C = await import('/src/city.js');
+    const ray = new THREE.Raycaster();
+    const E = w.bounds + 2, out = { looks: 0, landed: 0, far: g.camera.far, buildings: O?.userData?.buildings ?? 0 };
+    const meshes = [];
+    O?.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    for (const [cx, cz] of [[E, E], [-E, E], [E, -E], [-E, -E], [0, E], [E, 0]]) {
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a);
+        if (dx * cx + dz * cz <= 0) continue;              // looking out, not back over the city
+        out.looks++;
+        ray.set(new THREE.Vector3(cx, 30, cz), new THREE.Vector3(dx, -0.035, dz).normalize());
+        ray.far = g.camera.far;
+        if (ray.intersectObjects(meshes, false).length) out.landed++;
+      }
+    }
+    // level with the street where the street's ground plane ends, all round
+    let step = 0;
+    const rim = (C.SECTOR.grid * C.SECTOR.block + 12) / 2;
+    for (let t = -rim; t <= rim; t += 4) {
+      for (const [x, z] of [[t, -rim], [t, rim], [-rim, t], [rim, t]]) step = Math.max(step, Math.abs(C.outskirtsHeight(x, z)));
+    }
+    out.step = +step.toFixed(3);
+    out.inSolids = w.solids.filter((m) => meshes.includes(m)).length;
+    // the perimeter wall runs 10 m past each corner of the sector, so that is
+    // the furthest any collider may reach
+    const reach = (C.SECTOR.grid * C.SECTOR.block + 20) / 2 + 0.5;
+    out.boxesOut = w.boxes.filter((b) => Math.max(Math.abs(b.minX), Math.abs(b.maxX), Math.abs(b.minZ), Math.abs(b.maxZ)) > reach).length;
+    return out;
+  });
+  expect(r.looks >= 40 && r.landed === r.looks, `${r.looks - r.landed} of ${r.looks} looks out over the wall from a corner of the sector meet nothing inside ${r.far} m`);
+  expect(r.buildings >= 300, `only ${r.buildings} blocks stand outside the walls`);
+  expect(r.step < 0.01, `the waste ground stands ${r.step} m off the street's level at the wall`);
+  expect(r.inSolids === 0 && r.boxesOut === 0, `outside the walls, ${r.inSolids} raycast targets and ${r.boxesOut} colliders`);
+  return r;
+});
+
 check('a crate is boards in a frame, inside the box it registers', async (page) => {
   // Every crate in the city — on a terrace, in a shop, on a floor — was a
   // box wearing a container's rust with its folds painted on, so a stack of
@@ -3728,12 +3906,16 @@ const CITY_FINGERPRINT = () => {
     for (const p of g.perches) { eat(p.x); eat(p.y); eat(p.z); }
     return (h >>> 0).toString(16);
   };
-  const placed = g.world.boxes.filter((b) => !b.heap);
+  // a door's leaves are the one collider that moves, and they are hung last,
+  // in doorways the rest of the city was laid out round: they are in the
+  // counts and not in the prints, so the prints say nothing else moved
+  const still = g.world.boxes.filter((b) => !b.door);
+  const placed = still.filter((b) => !b.heap);
   return {
     boxes: g.world.boxes.length,
     solids: g.world.solids.length,
     perches: g.perches.length,
-    fp: print(g.world.boxes),
+    fp: print(still),
     // everything placed before the rubble was given colliders
     placed: placed.length,
     fpPlaced: print(placed),
@@ -4670,6 +4852,8 @@ check('a building opens onto the street: you walk in under its floors, and it hi
     const g = window.__game;
     g.startRun();
     g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    // a shut door is a wall until you open it, which the door check asks
+    g.shutDoors(true);
     const w = g.world, p = g.player;
     const V = p.position.constructor;
     const rows = [];
@@ -6155,10 +6339,15 @@ check('a seed still lays out the city it did', async (page) => {
   // it: 5183/1628/12 'ad9623cd' (4964 'cd6bf043') -1632891350, 3500/1302/11
   // '3d385c25' (3188 '4ac1ea6a') 1200834133, 4704/1698/10 'cbb5835e' (4370
   // '6eb20fbc') -1828098447.
+  //
+  // And doors in some shop doorways (`registerDoors`): two leaves each, a
+  // collider and a raycast mesh a leaf, hung after everything else. The
+  // prints leave them out, and every print, perch and mark is what it was;
+  // the counts are the leaves. Before them: 7724/2754, 6966/2670, 6739/2660.
   const want = {
-    1: { boxes: 7724, solids: 2754, perches: 32, fp: 'ccb93635', placed: 7040, fpPlaced: '25801dfc', mark: 220091255 },
-    7: { boxes: 6966, solids: 2670, perches: 26, fp: 'f1381805', placed: 6435, fpPlaced: '311f203e', mark: 157064770 },
-    20260101: { boxes: 6739, solids: 2660, perches: 17, fp: '77a1d141', placed: 6318, fpPlaced: '5c4a4264', mark: 475216655 },
+    1: { boxes: 7750, solids: 2780, perches: 32, fp: 'ccb93635', placed: 7040, fpPlaced: '25801dfc', mark: 220091255 },
+    7: { boxes: 6996, solids: 2700, perches: 26, fp: 'f1381805', placed: 6435, fpPlaced: '311f203e', mark: 157064770 },
+    20260101: { boxes: 6773, solids: 2694, perches: 17, fp: '77a1d141', placed: 6318, fpPlaced: '5c4a4264', mark: 475216655 },
   };
   // `mark` is where the seeded stream stands at the end of boot, which is
   // the stream every spawn is picked from. Every pass that changed how

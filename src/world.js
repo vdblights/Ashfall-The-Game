@@ -158,6 +158,44 @@ export class World {
   }
 
   /**
+   * Register a door's leaf: a turned box that swings about a hinge. `t` is
+   * the way the closed leaf runs from its hinge across the doorway and `n`
+   * the way it swings open, both unit and square to each other. The box's
+   * min/max is everything the leaf can sweep, so the index — built once —
+   * finds it at every angle and every reader that only wants a bound stays
+   * right; every reader that wants the leaf itself transforms into its frame,
+   * which `setLeaf` moves. A door is a collider like any other box, to a body,
+   * a sight line and a grenade, only one that turns.
+   */
+  addDoorLeaf(hx, hz, tx, tz, nx, nz, width, top, base = 0, thick = 0.12) {
+    const xs = [hx, hx + tx * width, hx + nx * width, hx + (tx + nx) * width];
+    const zs = [hz, hz + tz * width, hz + nz * width, hz + (tz + nz) * width];
+    const pad = thick;
+    const b = {
+      minX: Math.min(...xs) - pad, maxX: Math.max(...xs) + pad,
+      minZ: Math.min(...zs) - pad, maxZ: Math.max(...zs) + pad, top, base,
+      cx: 0, cz: 0, hx: width / 2, hz: thick / 2, cos: 1, sin: 0,
+      door: { hx, hz, tx, tz, nx, nz, width, angle: 0 },
+    };
+    this.boxes.push(b);
+    this.setLeaf(b, 0);
+    return b;
+  }
+
+  /** Swing a leaf to `angle` (0 shut, π/2 open) about its hinge. */
+  setLeaf(b, angle) {
+    const d = b.door;
+    d.angle = angle;
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const dx = d.tx * c + d.nx * s, dz = d.tz * c + d.nz * s;
+    b.cx = d.hx + dx * d.width / 2;
+    b.cz = d.hz + dz * d.width / 2;
+    // local X along the leaf: lx = cos * rx - sin * rz, as `addRotatedBox`
+    b.cos = dx;
+    b.sin = -dz;
+  }
+
+  /**
    * Index the boxes on a coarse grid, once the city is built.
    *
    * Every query used to walk the whole box list, which was fine at 770
@@ -513,7 +551,8 @@ export class World {
       // the corners of the AABB that stick out past the prop. Confirm against
       // the footprint before calling the line blocked, or a container at an
       // angle gives cover from a metre to the side of itself.
-      if (box.sin !== 0 && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
+      // A door's bound is everything it sweeps, so a door always asks.
+      if ((box.sin !== 0 || box.door) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
 
       return false;
     }

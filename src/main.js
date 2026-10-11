@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildCity, CITY_PAINT } from './city.js';
+import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN } from './city.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
 import { Player, Input } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
@@ -222,6 +222,10 @@ class Game {
         // vanishes, and the merged city is too late to tell which prop it
         // vanished from.
         this.propShapes = city.shapes;
+        // the shops' doors (`registerDoors`), and the rest of Carrow past
+        // the walls, neither of them in the bake
+        this.doors = city.doors;
+        this.outskirts = city.outer;
 
         // Where hostiles can walk, and which way is toward you from anywhere
         // in the sector. Built once the city's boxes are final, and out of
@@ -897,6 +901,7 @@ class Game {
       if (code === 'Digit4') this.weapons.select(3, this.time);
       if (code === 'KeyQ') this.weapons.cycle(1, this.time);
       if (code === 'KeyB') this.openArmoury();
+      if (code === 'KeyE') this.useDoor();
       if (code === 'KeyF' || code === 'KeyV') this.weapons.startMelee(this.time);
       if (code === 'KeyG' && this.cookStart < 0 && this.nades > 0 && !this.player.dead) {
         this.cookStart = this.time;          // pin is out; the fuse is running
@@ -963,6 +968,7 @@ class Game {
     this.cookStart = -1;
     this.nextAmbience = 10;
 
+    this.shutDoors();
     this.player.reset(INSERTION.x, INSERTION.z);
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
@@ -1920,6 +1926,88 @@ class Game {
     this.perf.draw(this, ended);
   }
 
+  /**
+   * The door in reach of the player, if any: its doorway's middle within
+   * 2.4 m of them, on their floor, and in front of where they are looking.
+   */
+  doorInReach() {
+    if (!this.doors || this.player.dead) return null;
+    const p = this.player.position, fx = -Math.sin(this.player.yaw), fz = -Math.cos(this.player.yaw);
+    let best = null, bd = 2.4;
+    for (const d of this.doors.list) {
+      const dx = d.x - p.x, dz = d.z - p.z, dist = Math.hypot(dx, dz);
+      if (dist > bd || Math.abs(this.player.feetY - d.floor) > 1.2) continue;
+      if (dist > 0.6 && (dx * fx + dz * fz) / dist < 0.35) continue;
+      best = d; bd = dist;
+    }
+    return best;
+  }
+
+  /** `E`: open the door in reach, or shut it if nothing stands in its way. */
+  useDoor() {
+    const d = this.doorInReach();
+    if (!d) return false;
+    if (d.open && this._doorwayBlocked(d)) { this.hud.toast('SOMETHING IN THE WAY'); return false; }
+    d.open = !d.open;
+    audio.door(new THREE.Vector3(d.x, d.floor + 1.2, d.z), !d.open);
+    return true;
+  }
+
+  /**
+   * Is a body where the leaves would close? A door shuts across the doorway
+   * from its jambs, so anything within reach of that line stops it — a
+   * leaf closing through a hostile would leave it standing inside the door.
+   */
+  _doorwayBlocked(d) {
+    const near = (x, z, r) => {
+      const tx = -d.nz, tz = d.nx, rx = x - d.x, rz = z - d.z;
+      const along = rx * tx + rz * tz, across = rx * d.nx + rz * d.nz;
+      return Math.abs(along) < d.width / 2 + r && across > -(d.width / 2 + r) && across < r + 0.2;
+    };
+    const p = this.player.position;
+    if (Math.abs(this.player.feetY - d.floor) < 1.5 && near(p.x, p.z, this.player.radius)) return true;
+    return this.enemies.some((e) => e.alive && Math.abs(e.pos.y - d.floor) < 1.5 && near(e.pos.x, e.pos.z, e.radius));
+  }
+
+  /**
+   * Swing every door toward where it has been told to be, and open one for
+   * a hostile that walks up to it. A hostile does not stop at a door: the
+   * route field reads every doorway as open (`nav.js`), so one that arrives
+   * pushes it open, the way the holdout does too — and nothing shuts a door
+   * but the player.
+   */
+  updateDoors(dt) {
+    if (!this.doors) return;
+    for (const d of this.doors.list) {
+      if (!d.open) {
+        for (const e of this.enemies) {
+          if (!e.alive || Math.abs(e.pos.y - d.floor) > 1.5) continue;
+          const dx = d.x - e.pos.x, dz = d.z - e.pos.z, dist = Math.hypot(dx, dz);
+          // in reach of it, or heading for it from a little further
+          const toward = (e.vel.x * dx + e.vel.z * dz) / (dist || 1);
+          if (dist < 1.6 || (dist < 3.2 && toward > 0.4)) {
+            d.open = true;
+            audio.door(new THREE.Vector3(d.x, d.floor + 1.2, d.z), false);
+            break;
+          }
+        }
+      }
+      const target = d.open ? DOOR_OPEN : 0;
+      if (d.angle === target) continue;
+      const step = 3.6 * dt;
+      d.angle = Math.abs(target - d.angle) <= step ? target : d.angle + Math.sign(target - d.angle) * step;
+      placeDoor(this.world, this.doors, d);
+    }
+    this.doorHint = this.state === 'playing' && this.doorInReach()
+      ? (this.doorInReach().open ? '[E] CLOSE DOOR' : '[E] OPEN DOOR') : '';
+  }
+
+  /** Every door shut, as a run starts — or every one open, which a check asks for. */
+  shutDoors(open = false) {
+    if (!this.doors) return;
+    for (const d of this.doors.list) { d.open = open; d.angle = open ? DOOR_OPEN : 0; placeDoor(this.world, this.doors, d); }
+  }
+
   step(dt) {
     const input = this.input;
 
@@ -1965,6 +2053,8 @@ class Game {
       frag.warned = true;
       this.hud.toast('GRENADE');
     }
+
+    this.updateDoors(dt);
 
     // enemies
     for (let i = this.enemies.length - 1; i >= 0; i--) {

@@ -52,7 +52,7 @@ builds, never to play.
 | --- | --- |
 | `src/main.js` | `Game`: loop, scene, lighting, waves, hit resolution, blasts |
 | `src/world.js` | Box collision (square, turned, a ceiling overhead or a deck over a ceiling), ground height, line of sight, sphere bounce, the grid that indexes them, which stairwell or floor a body is up |
-| `src/city.js` | Procedural generation; returns `{ world, fireBarrels, perches }` |
+| `src/city.js` | Procedural generation, the doors in it and the landscape past its wall; returns `{ world, fireBarrels, perches, doors, outer }` |
 | `src/player.js` | `Input` and `Player`: look, movement, footing, health |
 | `src/weapons.js` | Weapon defs, view models, firing, recoil, melee |
 | `src/enemies.js` | Archetypes, AI, procedural bodies, laser telegraph |
@@ -386,6 +386,83 @@ These each cost real debugging time. Changing them needs a reason.
   sampled tables, where a scavenger rightly hooks you from the floor
   rather than climbing, so it samples decks under the open sky now; and
   the pull-up check found the window climb above.
+- **A door is a collider that moves, inside an index that does not.**
+  Some shop doorways (`registerDoors` in `city.js`, a hash of where each
+  is, `DOOR.share`) hang two steel leaves hinged at the jambs on the
+  wall's inner face, swinging into the room; `E` works the one in front of
+  you (`Game.useDoor`), and it refuses to shut on a body. A leaf is a
+  turned box (`World.addDoorLeaf`) whose frame `setLeaf` swings about the
+  hinge, and six things keep every reader honest about it. **Its min/max
+  is its whole swing**, not where it is, because `World.seal` indexes the
+  boxes once and a box that moved out of its cells would be lost to
+  every query; the turned frame is the collider, as for any turned prop.
+  **`lineOfSight` confirms a door against its footprint even when it is
+  square** (`box.door`): a leaf shut along X has `sin` 0, and the slab
+  test alone would read its swing as a wall, so an open door blocked
+  sight. **A round meets a hidden mesh per leaf in `world.solids`**,
+  moved by `placeDoor` with the leaf, and both it and the collider run 3
+  cm past the middle: drawn, the two leaves meet with 4 mm between them,
+  and a sight line or a round down the middle went through every shut
+  door. Drawn, every leaf in the city is one `InstancedMesh`, built in a
+  `reserve` and never baked, so the mark after boot is unchanged and only
+  the box count moves. **The route field reads every doorway as open and
+  every open leaf as a wall** (`nav.js` bakes each leaf where it stands
+  open, square to the wall at its jamb): a hostile that comes to a shut
+  door opens it (`updateDoors`: within 1.6 m, or 3.2 heading for it), so a
+  door hides you, it does not hold anything out; and an open leaf stands 2
+  m into the shop, which a holdout, with no avoidance, walked into and
+  stood against from 4 of 43 floors, and a juggernaut from one stair shop
+  of 17, while the field read the door as nothing. Folding the leaves flat
+  against the wall (`DOOR_OPEN` at π) was tried first and taken out: a
+  shopfront's doorways are 0.6 m apart, so a folded leaf lies across the
+  next one, and 8 doorways of 72 could take a door. **A door is hung only
+  with a walkway round each open leaf** (`DOOR.walk`, 1.3 m either side
+  and past its end, clear of every collider and every other door): baked
+  with the shoulder every solid gets, a leaf beside a stairwell cut a 10 m
+  shop in two, and baked without one, holdouts routed beside leaves and
+  stood against them from 2 floors. That leaves 29 of seed 1's 72 shop
+  doorways able to take a door at all, and a hash hangs one in most.
+  **A door is hung only where its swing is clear** of every collider standing in the room — other
+  doors' swings included, which is what their envelopes are for — and of
+  the room's other doorways: a doorway that runs into a corner hangs its
+  leaf against the next wall, and opened it lay across the doorway there,
+  which the check found as a scavenger walking into it for twelve
+  seconds. Seed 1 has 13 doors on 72 shop doorways, seed 7 15 on 79 and
+  seed 20260101 17 on 98. `some doorways have
+  doors: shut, a door is a wall, and anyone can open one` shoots, sights,
+  throws at and walks into every one shut, opens it with `E`, does it all
+  again open, asks a sight line across the floor a shut door swings
+  over, and lets a scavenger out of six shops. It fails with the leaves
+  never registered (16 of 16 seen through), the raycast leaves the drawn
+  width (13 of 13 shot through the seam), the raycast leaves not moved (13
+  of 13 still stop a round open), the footprint rule left out (9 of 13
+  blind across their swing — and it *passed* until that measure was
+  added, because an open leaf is never exactly square, `cos(π/2)` being
+  6e-17), the route field baking a door's whole swing (0 of 13 open) and no
+  hostile opening one (0 of 6 out). With the open leaves not baked, a
+  holdout is walked down from 38 of 43 floors; with the walkway rule off,
+  the route field misses 31 cells of shop floor and holdouts stall. The
+  layout check leaves door boxes out of its prints, so the prints say
+  nothing else moved.
+- **Past the wall is a picture of the rest of the city, and only a
+  picture.** `outskirts` in `city.js`, built in `decor` after the bake:
+  waste ground on a grid out to 568 m (`OUT_REACH`, inside the camera's
+  600 m far plane), level with the street where the street's ground
+  plane ends (`outskirtsHeight` eases in from 4 m out) and rising to hills
+  at its edge so the ground never just stops; blocks on the city's own
+  lot centres in every facade, some gutted, some with broken tops; and
+  heaps against the outside of the wall. It is in neither collision list,
+  casts no shadow, and is merged per material on its own rather than by
+  the bake, which would file it into the edge patches and stretch their
+  batches over the landscape so nothing near the wall culled. The street's
+  drawn ground plane came in to 6 m past the sector to meet it; the
+  raycast ground is the old size, which nothing outside the wall can
+  reach. Its materials are `unbilled`, and it mints inside `decor`, so
+  the layout and the mark are untouched. `past the walls is the rest of
+  the city, out to the hills, and none of it in reach` looks out from six
+  points on the sector's edge, 30 m up, and asks every look to land on it
+  (48 of 48 meet nothing without it), and that nothing out there is a
+  collider or a raycast target.
 - **A box off the ground may be a deck: a ceiling to everything but the
   feet over it.** Thirteen of seed 1's 21 open ground floors — every one
   under a roof no higher than 14 m (`STAIR.top`) with a corner whose walls
@@ -2199,6 +2276,33 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the larger sector was two things asked for together:
+landscape past the walls, so a roof does not look out on the edge of the
+world, and doors in some doorways that open and close. Both are invariants
+above. Two things worth keeping. A collider that moves fits the sealed
+index by registering everything it can sweep as its bound and keeping
+where it is in its turned frame, and every reader already trusted that
+frame except `lineOfSight`, which only asked it of boxes that looked
+turned. And a door that moves is invisible to a route field baked once,
+which is fine shut — a hostile opens it — and not open, when its leaf
+stands in the room: the suite found that as holdouts standing against
+leaves from four floors and a juggernaut that never reached one stair,
+and three ways round it were tried before baking the open leaf and only
+hanging a door with a walkway round it held. What it cost, seed 1 under software rendering, against the
+commit before, four views (one from 20 m over a corner, looking out),
+twice each: high 3,020-4,686 → 3,266-4,853 ms a frame (+4-8%), low
+384-587 → 427-621, draw calls +15-19 on high and +14-17 on low, triangles
++20-57k a frame. The landscape is drawn in every view, because it is
+merged a mesh per material round the whole sector; splitting it by side
+so the camera can cull what is behind it is the lever if it ever matters.
+The layout, every perch and the mark after boot are unchanged on all
+three pinned seeds; the box counts are the door leaves (26, 30, 34).
+Boot in the harness went 41 → 42-44 s, on a day this machine booted the
+commit before in 41 where it had taken 29 — slow enough that two shards
+started 150 s apart missed the harness's 60 s wait on the second's first
+boot, twice. Run the second shard after the first when boots are that
+slow.
 
 The pass after the crates grew the sector, asked in one line: can we make
 the city larger? Asked back, the answer was 8 x 8 lots, from 6 x 6: 1.8x

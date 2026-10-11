@@ -134,6 +134,7 @@ scale had no initial value.
 | `1`–`4`, `Q`, mouse wheel | Switch weapons |
 | `G` | Frag grenade — **hold to cook**, release to throw |
 | `F` / `V` | Melee bash |
+| `E` | Open or close a door in front of you |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
@@ -409,6 +410,14 @@ corners and is only laid where they agree, so nothing hangs off a kerb. It costs
 decorative pass it draws from its own generator, so a seed lays out exactly
 the city it did before.
 
+The sector is not the edge of the world. Past its wall the city carries
+on along the same street grid: blocks of every facade, some gutted to a
+shell, some with their tops broken off, thinning out over waste ground that
+rolls away to a line of hills, with rubble heaped against the outside of the
+wall. From any roof you look out over a city the haze takes away, rather
+than over a strip of asphalt and then sky. None of it can be reached or
+shot, so none of it is anything but a picture.
+
 A window is a hole in the wall, not a picture of one. The facade's own
 shader knows where every opening is — the same four-by-three grid the walls
 are snapped to — and traces each one: a reveal a quarter of a metre deep that
@@ -659,6 +668,14 @@ them rather than in them, and a shot at the pavement stops at the pavement.
 Stepping up a kerb or a stair moves your feet at once and eases the view up
 after them, so a street crossing is not a jolt — and at a zebra there is no
 step at all, because the kerb is dropped and you walk up the ramp you see.
+
+Some shop doorways — about one in six, wherever there is room for them to
+swing — hang a pair of painted steel doors that open into the room. Shut, a
+door is a wall: it stops you, a sight line, a round and a grenade. `E` opens
+or closes the one in front of you, and it will not shut on anyone standing
+in it. A door hides you; it does not hold anything out. A hostile that walks
+up to a shut door opens it and comes through, so shutting yourself in buys
+you a moment of not being seen and the sound of it opening.
 
 ## How it is put together
 

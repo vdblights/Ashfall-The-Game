@@ -74,6 +74,10 @@ export const TILE = {
   // A crate's boards: eight to a metre, so a board is 12.5 cm and a 0.72 m
   // crate's side is six of them, its frame and brace cut from the same tile.
   wood: 1.0,
+  // The ground outside the walls, seen from a rooftop across a hundred
+  // metres and more: one tile is 12 m, so its patches of earth, rubble and
+  // scrub are big enough to read at that distance and not repeat within it.
+  terrain: 12,
 };
 
 /** Windows per facade tile. `city.js` snaps wall UVs to these. */
@@ -443,6 +447,33 @@ export function debris() {
     mottle(ctx, s, 14, 'rgba(40,32,24,0.22)', 10, 40);
     grit(ctx, s, 3000, '220,214,204', '0,0,0', 1.2);
     noise(ctx, s, 18);
+    return c;
+  });
+}
+
+/**
+ * Waste ground: what the city outside the walls has gone back to. Dust and
+ * dry earth, with fields of broken concrete through it where blocks came
+ * down, scrub in the hollows and the dark of old burns. It is only ever
+ * seen from far off and from above, so it is shapes rather than grain:
+ * every patch is a thresholded fractal (`mottle`), never a disc, and the
+ * flecks are clusters.
+ */
+export function wasteland() {
+  return make('wasteland', () => {
+    const s = 512, c = canvas(s), ctx = c.getContext('2d');
+    ctx.fillStyle = '#7a6d5c';
+    ctx.fillRect(0, 0, s, s);
+    mottle(ctx, s, 30, 'rgba(98,86,70,0.55)', 20, 70);          // darker earth
+    mottle(ctx, s, 24, 'rgba(132,126,116,0.6)', 14, 46);        // rubble fields
+    mottle(ctx, s, 16, 'rgba(70,72,52,0.55)', 10, 34);          // scrub
+    mottle(ctx, s, 8, 'rgba(38,32,28,0.35)', 12, 40);           // old burns
+    splotches(ctx, s, 420, 'rgba(150,146,138,0.5)', 1.5, 4);    // broken concrete
+    splotches(ctx, s, 160, 'rgba(120,74,52,0.4)', 1.5, 3.5);    // brick
+    splotches(ctx, s, 520, 'rgba(58,62,40,0.55)', 1, 3);        // scrub
+    for (let k = 0; k < 14; k++) crack(ctx, s, rr(0, s), rr(0, s), rr(40, 140), rr(1, 2), 'rgba(40,34,28,0.35)');
+    grit(ctx, s, 2400, '210,200,186', '30,26,22', 1.3);
+    noise(ctx, s, 16);
     return c;
   });
 }
