@@ -3446,6 +3446,51 @@ check('past the walls is the rest of the city, out to the hills, and none of it 
   return r;
 });
 
+check('a shop is fitted out with shelving and a counter, not slabs, inside the boxes they collide as', async (page) => {
+  // Every shelving unit and counter in a shop was a box the size of the
+  // unit in a fully metallic paint, so every shop's fittings read as dark
+  // slabs. They are shapes now (`shelvingGeo`, `counterGeo`) — uprights,
+  // shelves and what was left on them; a top, a panel and a kick — in a
+  // painted material (`fittings`). This reads each one where a round meets
+  // it (`world.solids`): more than a box's faces, stock in more than one
+  // colour on a shelf, and nothing of it outside the collider it registers.
+  const r = await page.evaluate(() => {
+    const g = window.__game, w = g.world;
+    const out = { units: 0, shelving: 0, counters: 0, boxy: 0, plain: 0, proud: 0, metalness: null, worst: 0 };
+    for (const m of w.solids) {
+      if (m.material?.userData?.name !== 'fittings' || !m.userData.keepShade) continue;
+      out.units++;
+      out.metalness = m.material.metalness;
+      const geo = m.geometry, e = m.matrixWorld.elements;
+      geo.computeBoundingBox();
+      const bb = geo.boundingBox;
+      const x0 = bb.min.x + e[12], x1 = bb.max.x + e[12], y1 = bb.max.y + e[13], z0 = bb.min.z + e[14], z1 = bb.max.z + e[14];
+      const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+      const box = w.boxes.find((b) => b.piece && Math.abs((b.minX + b.maxX) / 2 - cx) < 0.05 && Math.abs((b.minZ + b.maxZ) / 2 - cz) < 0.05);
+      const tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+      if (tris <= 12) out.boxy++;
+      const tall = y1 - (bb.min.y + e[13]) > 1.5;
+      if (tall) out.shelving++; else out.counters++;
+      // stock on a shelf: more than the paint's two shades
+      const col = geo.attributes.color, seen = new Set();
+      for (let i = 0; i < col.count; i += 7) seen.add(`${col.getX(i).toFixed(2)},${col.getY(i).toFixed(2)},${col.getZ(i).toFixed(2)}`);
+      if (tall && seen.size < 4) out.plain++;
+      if (!box) { out.proud++; continue; }
+      const over = Math.max(box.minX - x0, x1 - box.maxX, box.minZ - z0, z1 - box.maxZ, y1 - box.top);
+      out.worst = Math.max(out.worst, +over.toFixed(4));
+      if (over > 0.002) out.proud++;
+    }
+    return out;
+  });
+  // Measured on seed 1: the fittings of 34 shops.
+  expect(r.shelving >= 20 && r.counters >= 5, `only ${r.shelving} shelving units and ${r.counters} counters in the shops`);
+  expect(r.boxy === 0, `${r.boxy} of ${r.units} fittings are still a box`);
+  expect(r.plain === 0, `${r.plain} of ${r.shelving} shelving units hold nothing`);
+  expect(r.metalness <= 0.5, `fittings drawn at metalness ${r.metalness}: bare metal has no light in a shaded room`);
+  expect(r.proud === 0, `${r.proud} of ${r.units} fittings stand outside their colliders, by up to ${r.worst} m`);
+  return r;
+});
+
 check('a crate is boards in a frame, inside the box it registers', async (page) => {
   // Every crate in the city — on a terrace, in a shop, on a floor — was a
   // box wearing a container's rust with its folds painted on, so a stack of

@@ -282,10 +282,12 @@ These each cost real debugging time. Changing them needs a reason.
   identical, and compared collider by collider on seeds 1, 7 and 20260101
   the only colliders gone are the 21, 16 and 25 blocks that opened and every
   new one lies inside one of their footprints. **The bake darkens what is
-  under a ceiling** (`indoorField`) by how far it is from the building's
-  faces, or a room is as bright as the pavement: under half the light at
-  the back of a wide floor, most of it by the shopfront, and nothing on the
-  faces themselves. **Hostiles collide at their archetype's height**, not an
+  under a ceiling** (`indoorField`) by how far it is from the room's
+  doorways and windows (`toOpening`), or a room is as bright as the
+  pavement: under half the light at the back of a wide floor, most of it
+  by the shopfront, and nothing on the faces themselves. It was the
+  distance to any outer face, so a blank wall onto the next building lit
+  the floor beside it like a window. **Hostiles collide at their archetype's height**, not an
   elite's, so a warlord can follow you in; an elite juggernaut's head goes
   through the slab, which is the price. And **the boxes are indexed once
   the city is built** (`World.seal`): 500 more colliders on seed 1 doubled
@@ -386,6 +388,32 @@ These each cost real debugging time. Changing them needs a reason.
   sampled tables, where a scavenger rightly hooks you from the floor
   rather than climbing, so it samples decks under the open sky now; and
   the pull-up check found the window climb above.
+- **A shop is fitted out, and its fittings are paint.** Every shelving
+  unit and counter was a box the size of the piece in `metalMat`, which is
+  fully metallic — no diffuse light, so in a shaded room each was a dark
+  slab. `shelvingGeo` and `counterGeo` in `city.js` build them: uprights at
+  every bay, shelf boards, a divider and a kick, and stock on the shelves
+  (boxes and tins by a hash, with gaps where the rest was taken, on the
+  side that faces the room for a unit against a wall); a top, ends, a
+  front panel on the customer's side and a kick. They wear `fitMat`
+  (`fittings`, metalness 0.2), the doors' lesson a third time. Three things
+  keep it free and honest. **Each piece is still one mesh**, its parts
+  merged, because the bake bills a UUID a mesh, and the material is billed
+  as the metal it replaced (`billAs`), because it bills a pair a material
+  — so the layout, the prints and the mark after boot are unchanged.
+  **Each part carries its own shade** (`paint`) and the bake keeps it
+  under its own (`keepShade`, which `shadeGeometry` multiplies in rather
+  than overwriting), or the stock comes out the colour of the shelf.
+  **Nothing stands outside the box it registers**: the till first put on a
+  counter stood over its collider and was taken off. And dead strip lights
+  hang from every shop's ceiling, a few gone and a few by one end — one
+  mesh a shop, flagged `decor` by hand rather than built in `decor`, which
+  walks the whole city twice a call. `a shop is fitted out with shelving
+  and a counter, not slabs` reads every fitting where a round meets it: 33
+  shelving units and 12 counters on seed 1, none a box, none empty, none
+  proud of its collider; it fails with the shelving a painted box (33 of
+  45 fittings), the paint fully metallic, the shelves bare (33 of 33 hold
+  nothing), and a shelf board 4 cm longer than its unit (33 proud by 2 cm).
 - **A door is a collider that moves, inside an index that does not.**
   Some shop doorways (`registerDoors` in `city.js`, a hash of where each
   is, `DOOR.share`) hang two steel leaves hinged at the jambs on the
@@ -2306,6 +2334,17 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the outskirts went indoors, in rendered frames from every
+shop's doorway, and found the rooms read as empty car parks: every counter
+and shelf a dark slab, and a bare slab for a ceiling. The fittings are
+shapes now, in paint (invariant above), there are dead strip lights
+overhead, and the bake lights a room from its openings rather than from its
+walls. What it cost, seed 1 under software rendering against `main`, three
+street views and two from shop doorways, twice each: the city 1.053M →
+1.094M triangles, draw calls +14-21 on high and +4-13 on low (the new
+material's batches), frame time within noise on both tiers. The layout,
+the prints and the mark after boot are unchanged.
 
 The pass after the landscape and the doors came from looking at both in
 rendered frames. From a roof the outskirts read as boxes dropped on sand —
