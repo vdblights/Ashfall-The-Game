@@ -3325,12 +3325,23 @@ check('some doorways have doors: shut, a door is a wall, and anyone can open one
       out.hostiles.push({ outAt, opened: d.open });
     }
     g.shutDoors();
+    // drawn in paint, with a vision panel in every leaf
+    out.metalness = g.doors.drawn.material.metalness;
+    const M1 = new THREE.Matrix4(), M2 = new THREE.Matrix4();
+    out.panes = g.doors.list.flatMap((d) => d.leaves).filter((l) => {
+      g.doors.drawn.getMatrixAt(l.index, M1); g.doors.pane.getMatrixAt(l.index, M2);
+      return M1.equals(M2);
+    }).length;
+    out.leaves = g.doors.list.length * 2;
     return out;
   });
   // Measured on seed 1: 13 doors on 72 shop doorways — a doorway needs room
   // round its open leaves for one (`registerDoors`).
   const n = r.doors;
   expect(n >= 10 && n >= r.doorways * 0.12 && n <= r.doorways * 0.65, `${n} doors on ${r.doorways} doorways — some doorways, not none and not all`);
+  // paint is not a metal: fully metallic, a shut door in shade had no
+  // diffuse light and read as a black hole in the wall
+  expect(r.metalness <= 0.5 && r.panes === r.leaves, `doors drawn at metalness ${r.metalness}, ${r.panes} of ${r.leaves} leaves glazed`);
   expect(r.shutSeen === 0, `${r.shutSeen} of ${n} shut doors let a sight line through`);
   expect(r.shutShot === 0, `${r.shutShot} of ${n} shut doors let a round through`);
   expect(r.swingBlind === 0, `${r.swingBlind} of ${n} shut doors block sight across the floor they swing over`);
@@ -3354,9 +3365,11 @@ check('past the walls is the rest of the city, out to the hills, and none of it 
   // every corner of the sector in sixteen directions, a little below the
   // horizon, and asks each look to land on the landscape inside the camera's
   // far plane; it asks for the blocks; it asks that the waste ground meets
-  // the street's level at the wall all round; and it asks that none of it
-  // is a collider or a raycast target, because nothing out there can be
-  // reached.
+  // the street's level at the wall all round; it asks that every block casts
+  // a shadow away from the sun and the streets between the lots are paved,
+  // because without either the blocks read as pasted onto sand; and it asks
+  // that none of it is a collider or a raycast target, because nothing out
+  // there can be reached.
   const r = await page.evaluate(async () => {
     const THREE = await import('three');
     const g = window.__game, w = g.world, O = g.outskirts;
@@ -3382,6 +3395,40 @@ check('past the walls is the rest of the city, out to the hills, and none of it 
       for (const [x, z] of [[t, -rim], [t, rim], [-rim, t], [rim, t]]) step = Math.max(step, Math.abs(C.outskirtsHeight(x, z)));
     }
     out.step = +step.toFixed(3);
+    // Every block throws its shadow away from the sun, where the sector's
+    // shadow maps cannot reach: just past its footprint on the side away
+    // from the sun the ground is in shade.
+    const A = await import('/src/atmosphere.js');
+    const shade = O?.userData?.shade, img = shade?.material?.map?.image, E2 = O?.userData?.extent;
+    const blocks = O?.userData?.blocks || [];
+    const lee = new THREE.Vector2(-A.SUN_DIR.x, -A.SUN_DIR.z).normalize();
+    const alphaAt = (x, z) => {
+      const i = Math.floor((x + E2) / (2 * E2) * img.width), j = Math.floor((z + E2) / (2 * E2) * img.height);
+      return img.data[(j * img.width + i) * 4 + 3];
+    };
+    out.blocks = blocks.length;
+    out.shaded = img ? blocks.filter(([cx, cz, hx, hz]) => {
+      const reach = Math.abs(lee.x) * hx + Math.abs(lee.y) * hz + 2;
+      return alphaAt(cx + lee.x * reach, cz + lee.y * reach) >= 100;
+    }).length : 0;
+    // And the street grid carries on: straight down onto the middle of every
+    // street between two lots, out past the rubble at the wall, is road.
+    const targets = meshes.filter((m) => m !== shade);
+    let streets = 0, paved = 0;
+    for (let k = -8; k <= 8; k++) {
+      for (let m = -8; m < 8; m++) {
+        for (const [x, z] of [[(m + 0.5) * C.SECTOR.block, k * C.SECTOR.block], [k * C.SECTOR.block, (m + 0.5) * C.SECTOR.block]]) {
+          const r = Math.max(Math.abs(x), Math.abs(z));
+          if (r < rim + 50 || r > 300) continue;
+          streets++;
+          ray.set(new THREE.Vector3(x, 200, z), new THREE.Vector3(0, -1, 0)); ray.far = 400;
+          const hit = ray.intersectObjects(targets, false)[0];
+          if (hit?.object.material?.userData?.name === 'asphalt') paved++;
+        }
+      }
+    }
+    out.streets = `${paved}/${streets}`;
+    out.paved = streets ? paved / streets : 0;
     out.inSolids = w.solids.filter((m) => meshes.includes(m)).length;
     // the perimeter wall runs 10 m past each corner of the sector, so that is
     // the furthest any collider may reach
@@ -3392,6 +3439,9 @@ check('past the walls is the rest of the city, out to the hills, and none of it 
   expect(r.looks >= 40 && r.landed === r.looks, `${r.looks - r.landed} of ${r.looks} looks out over the wall from a corner of the sector meet nothing inside ${r.far} m`);
   expect(r.buildings >= 300, `only ${r.buildings} blocks stand outside the walls`);
   expect(r.step < 0.01, `the waste ground stands ${r.step} m off the street's level at the wall`);
+  expect(r.blocks >= 300 && r.shaded >= r.blocks * 0.97, `${r.blocks - r.shaded} of ${r.blocks} blocks outside the walls throw no shadow away from the sun`);
+  // a stretch in twenty-five is cratered out on purpose (`lay`)
+  expect(r.paved >= 0.85, `only ${r.streets} streets outside the walls are paved`);
   expect(r.inSolids === 0 && r.boxesOut === 0, `outside the walls, ${r.inSolids} raycast targets and ${r.boxesOut} colliders`);
   return r;
 });

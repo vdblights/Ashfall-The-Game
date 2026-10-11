@@ -405,7 +405,13 @@ These each cost real debugging time. Changing them needs a reason.
   and a sight line or a round down the middle went through every shut
   door. Drawn, every leaf in the city is one `InstancedMesh`, built in a
   `reserve` and never baked, so the mark after boot is unchanged and only
-  the box count moves. **The route field reads every doorway as open and
+  the box count moves; a leaf is a slab with stiles and rails proud of it,
+  a kick plate, a push bar and a wired-glass vision panel, the glass a
+  second instanced mesh on the same matrices. **A door is paint, not
+  metal** (`metalness` 0.25 under the metal map): fully metallic, as it
+  first was, it had no diffuse light, and under a shop's ceiling a shut
+  door was a black slab in the doorway — the drops pass's lesson again,
+  one file over. **The route field reads every doorway as open and
   every open leaf as a wall** (`nav.js` bakes each leaf where it stands
   open, square to the wall at its jamb): a hostile that comes to a shut
   door opens it (`updateDoors`: within 1.6 m, or 3.2 heading for it), so a
@@ -462,7 +468,26 @@ These each cost real debugging time. Changing them needs a reason.
   the city, out to the hills, and none of it in reach` looks out from six
   points on the sector's edge, 30 m up, and asks every look to land on it
   (48 of 48 meet nothing without it), and that nothing out there is a
-  collider or a raycast target.
+  collider or a raycast target. **Out there the blocks stand on streets
+  and in their own shade**, or from a roof they read as boxes dropped on
+  sand. The grid's 6 m streets are laid as asphalt draped over the ground
+  (`drape`, which reads `terrainAt` — the ground's own triangles, split
+  the way the mesh splits them, not the function it was sampled from — at
+  3.5 m, because at 7 m the ground's curve rose 0.28 m between samples and
+  through a 0.3 m lift), up to the wall and cratered out a stretch in
+  twenty-five; a road along x runs through its junctions and one along z
+  stops at them, so no two lie over each other. Every built lot has an
+  apron. And the sun's shadow maps cover the sector and nothing past it,
+  so every block's shadow — its footprint swept away from the sun by its
+  height — and a darkening at its foot are rasterised into one alpha map
+  (`RES` 1024 over the landscape, 1.1 m a texel), which a sheet 0.6 m
+  over the ground, laid on the ground's own vertices, wears in black: one
+  draw, and two shadows that overlap darken the ground once. The check
+  asks the map for shade just past every block on the side away from the
+  sun (1,101 of 1,111 on seed 1; 380 left bare with the sweep pointed at
+  the sun, the rest lying in a neighbour's shadow)
+  and straight down onto every street between two lots for road (272 of
+  280; none with the roads not laid).
 - **A box off the ground may be a deck: a ceiling to everything but the
   feet over it.** Thirteen of seed 1's 21 open ground floors — every one
   under a roof no higher than 14 m (`STAIR.top`) with a corner whose walls
@@ -2100,8 +2125,13 @@ run that straddles an edit tests nothing, and one check booted in the few
 seconds a half-made edit was on disk and hung until it was killed. Finish
 editing, then run, and kill a run before changing the layout under it.
 Nor render alongside it: a look script booting a second game on the same
-machine pushed one of the suite's boots past the harness's 60 s wait, and
-the whole run died eighteen checks in. Four shards started together on this
+machine pushed one of the suite's boots past the harness's boot wait, and
+the whole run died eighteen checks in. That wait is 120 s now
+(`BOOT_WAIT_MS`, `ASHFALL_BOOT_MS` to change it); it was 60, and a fresh
+container here booted alone in 41-58 s, so a second game alongside took it
+over. A boot that times out says the page's errors with it, because a
+boot that never finishes has usually thrown on the way and the bare
+timeout said nothing. Four shards started together on this
 machine all missed that wait on their very first boot and ran nothing;
 two, the second started a minute and a half after the first, ran the
 whole suite. And do not edit `tests/run.js` between starting one shard
@@ -2276,6 +2306,21 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the landscape and the doors came from looking at both in
+rendered frames. From a roof the outskirts read as boxes dropped on sand —
+no streets between them and no shadow under them, because the sun's maps
+end at the wall — and a shut door in shade was a black slab, because it
+was drawn as bare metal. Both are in the invariants above: streets and
+aprons draped on the outer grid with a raster of every block's shadow on
+a sheet over them, and doors in paint with a vision panel. What it cost,
+seed 1 under software rendering against `main`, four views (one 22 m over
+a corner, looking out) twice each: triangles +52k a frame (+116k before
+the drapes were sampled no finer than their lift needs), draw calls +4,
+frame time within noise on high (3,637-6,068 against 3,861-6,103 ms) and
+about 5% on low (509-713 against 544-716). The raster is a pixel loop
+over about 1,100 blocks at boot, inside noise (55 s against 58 on `main`). And the harness waits 120 s for a
+boot now, where it waited 60: this container booted alone in 41-58 s.
 
 The pass after the larger sector was two things asked for together:
 landscape past the walls, so a roof does not look out on the edge of the
