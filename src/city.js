@@ -5,6 +5,7 @@ import { TILE, FACADE_BAYS, FACADE_FLOORS, FACADE_VARIANTS } from './textures.js
 import { reserve, spend, makeRandom, UUID_COST } from './rng.js';
 import { chamferGeo, corrugateGeo, loftGeo, mergeIntoOne, sideGeo, latheGeo, bend, planarUV } from './shapes.js';
 import { cutWindows } from './windows.js';
+import { SUN_DIR } from './atmosphere.js';
 
 const BLOCK = 34;      // centre-to-centre distance between city lots
 const GRID = 8;        // lots per axis
@@ -1116,7 +1117,7 @@ const DOOR = { share: 0.9, thick: 0.12, leaf: 0.05, speed: 3.6, walk: 1.3 };
  * along a shopfront, 0.6 m off, and only 8 doorways in 72 could take one.
  */
 export const DOOR_OPEN = Math.PI / 2;
-const DOOR_PAINT = ['#3f4b39', '#5c2f27', '#3a4556', '#57534b', '#4a3a2c'];
+const DOOR_PAINT = ['#5a6b4f', '#7e3f31', '#4e6078', '#77736a', '#6b5440'];
 /** The leaf every drawn instance is scaled from: a shop doorway's, near enough. */
 const LEAF = { w: 2.25, h: 2.5 };
 // scratch for `placeDoor`, which runs mid-fight: built once, never per swing
@@ -1125,7 +1126,7 @@ const LEAF = { w: 2.25, h: 2.5 };
 const DOOR_M = new THREE.Matrix4(), DOOR_Q = new THREE.Quaternion();
 const DOOR_P = new THREE.Vector3(), DOOR_S = new THREE.Vector3(), DOOR_UP = new THREE.Vector3(0, 1, 0);
 
-function registerDoors(scene, world, mat) {
+function registerDoors(scene, world, mat, glassMat) {
   const group = new THREE.Group();
   group.name = 'doors';
   scene.add(group);
@@ -1200,12 +1201,28 @@ function registerDoors(scene, world, mat) {
   const paint = new THREE.Color();
   for (const d of out) for (const l of d.leaves) drawn.setColorAt(l.index, paint.setStyle(d.paint));
   group.add(drawn);
-  const doors = { list: out, drawn, group };
+  // and the wired glass in each leaf's vision panel, the same instances
+  const pane = new THREE.InstancedMesh(paneGeo(), glassMat, Math.max(1, leaves.length));
+  pane.count = leaves.length;
+  pane.receiveShadow = true;
+  pane.frustumCulled = false;
+  group.add(pane);
+  const doors = { list: out, drawn, pane, group };
   for (const d of out) placeDoor(world, doors, d);
   return doors;
 }
 
-/** A leaf from its hinge along +X, `w` wide and `h` tall, a slab with a kick plate and a push bar. */
+/**
+ * Where a leaf's vision panel is, in the drawn leaf's own frame: a pane set
+ * toward the lock side, in the upper half, the size of a real one.
+ */
+const PANE = { x: 0.62, y: 0.62, w: 0.42, h: 0.62 };
+
+/**
+ * A leaf from its hinge along +X, `w` wide and `h` tall: a slab, a frame of
+ * stiles and rails standing proud of it, a beaded frame round the vision
+ * panel, a kick plate and a push bar, each shaded against the paint.
+ */
 function doorLeafGeo(w, h) {
   const t = DOOR.leaf, M = TILE.metal;
   const part = (gw, gh, gd, x, y, z, shade) => {
@@ -1214,11 +1231,30 @@ function doorLeafGeo(w, h) {
     g.setAttribute('color', new THREE.BufferAttribute(c, 3));
     return g;
   };
+  const S = 0.11, proud = t + 0.012;           // stiles and rails: the leaf's frame
+  const px = w * PANE.x, py = h * PANE.y, pw = PANE.w, ph = PANE.h, b = 0.035;
   return mergeIntoOne([
     part(w, h, t, w / 2, h / 2, 0, 1),
+    part(S, h, proud, S / 2, h / 2, 0, 0.92),
+    part(S, h, proud, w - S / 2, h / 2, 0, 0.92),
+    part(w - 2 * S, S, proud, w / 2, h - S / 2, 0, 0.92),
+    part(w - 2 * S, S * 1.6, proud, w / 2, h * 0.42, 0, 0.92),       // the lock rail
+    // the bead round the pane
+    part(pw + 2 * b, b, proud + 0.008, px, py - ph / 2 - b / 2, 0, 0.7),
+    part(pw + 2 * b, b, proud + 0.008, px, py + ph / 2 + b / 2, 0, 0.7),
+    part(b, ph, proud + 0.008, px - pw / 2 - b / 2, py, 0, 0.7),
+    part(b, ph, proud + 0.008, px + pw / 2 + b / 2, py, 0, 0.7),
     part(w * 0.96, Math.min(0.25, h * 0.1), t + 0.008, w / 2, Math.min(0.125, h * 0.05) + 0.02, 0, 0.55),
     part(w * 0.55, 0.045, t + 0.06, w * 0.62, h * 0.4, 0, 0.35),
   ]);
+}
+
+/** The vision panel's glass, through the leaf and a few millimetres proud of both faces. */
+function paneGeo() {
+  const g = boxGeo(PANE.w, PANE.h, DOOR.leaf + 0.01, TILE.glass)
+    .translate(LEAF.w * PANE.x, LEAF.h * PANE.y, 0);
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(0.85), 3));
+  return g;
 }
 
 /** Put a doorway's leaves, colliders and drawn instances where its angle says. */
@@ -1235,8 +1271,10 @@ export function placeDoor(world, doors, d) {
     l.hit.matrixWorld.copy(l.hit.matrix);
     m.compose(DOOR_P, q, DOOR_S.set(l.w / LEAF.w, (d.top - d.floor) / LEAF.h, 1));
     doors.drawn.setMatrixAt(l.index, m);
+    doors.pane.setMatrixAt(l.index, m);
   }
   doors.drawn.instanceMatrix.needsUpdate = true;
+  doors.pane.instanceMatrix.needsUpdate = true;
 }
 
 /**
@@ -1268,7 +1306,7 @@ export function outskirtsHeight(x, z) {
   return roll * s(OUT_IN + 4, OUT_IN + 60, r) + hills;
 }
 
-function outskirts(scene, facades, terrainMat, debrisMat, capMat) {
+function outskirts(scene, facades, terrainMat, debrisMat, capMat, roadMat, paveMat) {
   const outer = new THREE.Group();
   outer.name = 'outskirts';
   scene.add(outer);
@@ -1278,10 +1316,11 @@ function outskirts(scene, facades, terrainMat, debrisMat, capMat) {
   // the ground: a square grid with the sector cut out of it
   const n = 80, half = n / 2, inner = 10;
   const pos = [], uv = [], col = [], idx = [];
+  const H = new Float32Array((n + 1) * (n + 1));
   for (let j = 0; j <= n; j++) {
     for (let i = 0; i <= n; i++) {
       const x = (i - half) * OUT_CELL, z = (j - half) * OUT_CELL;
-      const y = outskirtsHeight(x, z);
+      const y = H[j * (n + 1) + i] = outskirtsHeight(x, z);
       pos.push(x, y, z);
       uv.push(x / TILE.terrain, z / TILE.terrain);
       // patchy, and dark in the lee of the wall
@@ -1307,16 +1346,62 @@ function outskirts(scene, facades, terrainMat, debrisMat, capMat) {
   land.receiveShadow = true;
   outer.add(land);
 
+  // The ground's own height, read off its triangles rather than the function
+  // it was sampled from, so whatever is laid over it follows what is drawn:
+  // each cell is two triangles split from (i+1, j) to (i, j+1).
+  const terrainAt = (x, z) => {
+    const fx = x / OUT_CELL + half, fz = z / OUT_CELL + half;
+    const i = Math.min(n - 1, Math.max(0, Math.floor(fx))), j = Math.min(n - 1, Math.max(0, Math.floor(fz)));
+    const u = fx - i, v = fz - j, at = (a, b) => H[(j + b) * (n + 1) + i + a];
+    return u + v <= 1
+      ? at(0, 0) + (at(1, 0) - at(0, 0)) * u + (at(0, 1) - at(0, 0)) * v
+      : at(1, 1) + (at(0, 1) - at(1, 1)) * (1 - u) + (at(1, 0) - at(1, 1)) * (1 - v);
+  };
+  // A rectangle laid over the ground a little off it, sampled every `sx`
+  // and `sz`, its UVs planar at `tile` and its shade a slow mottle. The
+  // ground's triangles turn by up to about 0.13 in slope from one to the
+  // next, so a chord over a crease sags up to a quarter of that times its
+  // length under the ground it spans: `lift` has to cover it, and the shade
+  // sheet has to clear `lift` plus it.
+  const drape = (x0, x1, z0, z1, lift, tile, shade, sx = 3.5, sz = 3.5) => {
+    const ni = Math.max(1, Math.ceil((x1 - x0) / sx)), nj = Math.max(1, Math.ceil((z1 - z0) / sz));
+    const p = [], t = [], c = [], ix = [];
+    for (let j = 0; j <= nj; j++) {
+      for (let i = 0; i <= ni; i++) {
+        const x = x0 + (x1 - x0) * i / ni, z = z0 + (z1 - z0) * j / nj;
+        p.push(x, terrainAt(x, z) + lift, z);
+        t.push(x / tile, z / tile);
+        const v = shade * (0.85 + 0.25 * smoothNoise(x + 40, z - 70, 9));
+        c.push(v, v, v);
+      }
+    }
+    for (let j = 0; j < nj; j++) {
+      for (let i = 0; i < ni; i++) {
+        const a = j * (ni + 1) + i, b = a + 1, cc = a + ni + 1, d = cc + 1;
+        ix.push(a, cc, b, b, cc, d);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(t, 2));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
+    g.setIndex(ix);
+    g.computeVertexNormals();
+    return g;
+  };
+
   // the blocks: the street grid carried on, every lot a ruin or two
   const byMat = new Map();
   const put = (mat, geo) => { let a = byMat.get(mat); if (!a) byMat.set(mat, a = []); a.push(geo); };
   const lots = Math.ceil(OUT_REACH / BLOCK);
   let buildings = 0;
+  const standing = [], built = [];
   for (let gx = -lots; gx < lots; gx++) {
     for (let gz = -lots; gz < lots; gz++) {
       const cx = (gx + 0.5) * BLOCK, cz = (gz + 0.5) * BLOCK;
       const r = Math.max(Math.abs(cx), Math.abs(cz));
       if (r < OUT_IN + 45 || r > OUT_REACH - 140 || Math.random() < 0.15) continue;
+      built.push([cx, cz]);
       const split = Math.random();
       const cells = split < 0.35 ? [[0, 0, LOT, LOT]]
         : split < 0.7 ? [[-LOT / 4, 0, LOT / 2 - 1, LOT], [LOT / 4, 0, LOT / 2 - 1, LOT]]
@@ -1341,6 +1426,7 @@ function outskirts(scene, facades, terrainMat, debrisMat, capMat) {
           const geo = boxGeo(pw, ph, pd, TILE.facade, { ...wallUV(px, pz, ph), bands: 1 }).translate(px, base + ph / 2, pz);
           shadeGeometry(geo, tint, flat);
           put(mat, geo);
+          standing.push([px, pz, pw / 2, pd / 2, base + ph]);
           // a cap over it, as the city's towers have, so a roof seen from a
           // roof is a roof and not the top of a box
           if (ph > 6) {
@@ -1368,6 +1454,103 @@ function outskirts(scene, facades, terrainMat, debrisMat, capMat) {
     heaps.push(geo);
   }
   put(debrisMat, mergeIntoOne(heaps));
+
+  // The streets of the grid carried on past the wall, 6 m of road between
+  // the lots, up to the wall and thinning out toward the hills: a road along
+  // x runs through its junctions and one along z stops at them, so no two
+  // strips lie over each other. And a slab of pavement under every lot that
+  // has anything standing on it. Draped a little off the ground they are
+  // laid over, so a shadow can lie over them in turn.
+  const roads = [], aprons = [];
+  const lines = Math.floor((OUT_REACH - 135) / BLOCK);
+  const half3 = ROAD_HALF;
+  const lay = (x0, x1, z0, z1, alongX) => {
+    // clipped where it meets the sector: a street runs up to the wall
+    if (x1 > -OUT_IN && x0 < OUT_IN && z1 > -OUT_IN && z0 < OUT_IN) {
+      if (alongX) { if ((x0 + x1) > 0) x0 = Math.max(x0, OUT_IN); else x1 = Math.min(x1, -OUT_IN); }
+      else { if ((z0 + z1) > 0) z0 = Math.max(z0, OUT_IN); else z1 = Math.min(z1, -OUT_IN); }
+      if (x1 - x0 < 0.5 || z1 - z0 < 0.5) return;
+    }
+    const r = Math.max(Math.abs((x0 + x1) / 2), Math.abs((z0 + z1) / 2));
+    // a stretch gone to craters and spoil, more of them further out
+    if (hash2(Math.round(x0), Math.round(z0), 917) < (r < OUT_IN + 150 ? 0.04 : 0.18)) return;
+    // one quad across the road and one every 3.5 m along it (a 0.19 m sag at most)
+    roads.push(drape(x0, x1, z0, z1, 0.22, TILE.asphalt, 0.82, alongX ? 3.5 : 7, alongX ? 7 : 3.5));
+  };
+  for (let k = -lines; k <= lines; k++) {
+    for (let m = -lines; m < lines; m++) {
+      lay(m * BLOCK, (m + 1) * BLOCK, k * BLOCK - half3, k * BLOCK + half3, true);
+      lay(k * BLOCK - half3, k * BLOCK + half3, m * BLOCK + half3, (m + 1) * BLOCK - half3, false);
+    }
+  }
+  const A = (LOT + 6) / 2;
+  // every 7 m: a 0.22 m sag at most, under a 0.3 m lift
+  for (const [cx, cz] of built) aprons.push(drape(cx - A, cx + A, cz - A, cz + A, 0.3, TILE.concrete, 0.78, 7, 7));
+  put(roadMat, mergeIntoOne(roads));
+  put(paveMat, mergeIntoOne(aprons));
+
+  // Shade. The sun's shadow maps cover the sector and nothing past it, so
+  // out here a block stood lit on all sides over a lit ground, pasted on.
+  // Every block's shadow — its footprint swept away from the sun by its
+  // height — and the darkening at its foot are rasterised into one alpha map
+  // over the whole landscape, which a sheet laid parallel to the ground and
+  // over everything on it wears in black: one draw, and where two shadows
+  // overlap the ground is darkened once, not twice.
+  const RES = 1024, E = half * OUT_CELL, texel = (2 * E) / RES;
+  const alpha = new Uint8Array(RES * RES);
+  const sx = -SUN_DIR.x / SUN_DIR.y, sz = -SUN_DIR.z / SUN_DIR.y;
+  for (const [cx, cz, hx, hz, top] of standing) {
+    const h = Math.max(0, top - terrainAt(cx, cz)), dx = sx * h, dz = sz * h;
+    const x0 = Math.min(cx - hx, cx - hx + dx) - 3, x1 = Math.max(cx + hx, cx + hx + dx) + 3;
+    const z0 = Math.min(cz - hz, cz - hz + dz) - 3, z1 = Math.max(cz + hz, cz + hz + dz) + 3;
+    const i0 = Math.max(0, Math.floor((x0 + E) / texel)), i1 = Math.min(RES - 1, Math.ceil((x1 + E) / texel));
+    const j0 = Math.max(0, Math.floor((z0 + E) / texel)), j1 = Math.min(RES - 1, Math.ceil((z1 + E) / texel));
+    // the range of the sweep, 0..1, that puts a point inside the footprint on one axis
+    const span = (q, c, hh, d) => {
+      if (Math.abs(d) < 1e-6) return Math.abs(q - c) <= hh ? [0, 1] : [1, 0];
+      const a = (q - c - hh) / d, b = (q - c + hh) / d;
+      return a < b ? [a, b] : [b, a];
+    };
+    for (let j = j0; j <= j1; j++) {
+      const z = -E + (j + 0.5) * texel;
+      for (let i = i0; i <= i1; i++) {
+        const x = -E + (i + 0.5) * texel;
+        const [ax, bx] = span(x, cx, hx, dx), [az, bz] = span(z, cz, hz, dz);
+        const lo = Math.max(0, ax, az), hi = Math.min(1, bx, bz);
+        let v = lo <= hi ? 128 : 0;
+        // and the gutter at its foot
+        const ox = Math.max(0, Math.abs(x - cx) - hx), oz = Math.max(0, Math.abs(z - cz) - hz);
+        const foot = Math.hypot(ox, oz);
+        if (foot < 3) v = Math.max(v, Math.round(90 * (1 - foot / 3)));
+        const k = j * RES + i;
+        if (v > alpha[k]) alpha[k] = v;
+      }
+    }
+  }
+  const rgba = new Uint8Array(RES * RES * 4);
+  for (let k = 0; k < RES * RES; k++) rgba[k * 4 + 3] = alpha[k];
+  const shadeTex = new THREE.DataTexture(rgba, RES, RES, THREE.RGBAFormat);
+  shadeTex.magFilter = THREE.LinearFilter;
+  shadeTex.minFilter = THREE.LinearMipmapLinearFilter;
+  shadeTex.generateMipmaps = true;
+  shadeTex.needsUpdate = true;
+  const sheet = ground.clone();
+  const sp = sheet.attributes.position, suv = sheet.attributes.uv;
+  for (let k = 0; k < sp.count; k++) {
+    sp.setY(k, sp.getY(k) + 0.6);
+    suv.setXY(k, (sp.getX(k) + E) / (2 * E), (sp.getZ(k) + E) / (2 * E));
+  }
+  sheet.deleteAttribute('color');
+  const shade = new THREE.Mesh(sheet, new THREE.MeshBasicMaterial({
+    color: 0x000000, map: shadeTex, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+  }));
+  shade.name = 'outskirts-shade';
+  shade.renderOrder = 1;
+  outer.add(shade);
+  outer.userData.shade = shade;
+  outer.userData.blocks = standing;
+  outer.userData.extent = E;
 
   for (const [mat, geos] of byMat) {
     const m = new THREE.Mesh(mergeIntoOne(geos), mat);
@@ -2334,11 +2517,14 @@ export const CITY_PAINT = [
       // the map is a light grey carrying scratches and rust, so what colour a
       // thing is painted stays on the material — one texture, many paints
       // a door's leaf: the same painted steel, the colour on each door its own
+      // painted steel: the paint is what the light meets, and paint is not a
+      // metal — fully metallic, a shut door in shade had no diffuse light at
+      // all and read as a black hole in the wall
       m.doorMat = new THREE.MeshStandardMaterial({
         map: metalTex, normalMap: TEX.normalFrom(metalTex, 1.2, 'painted', 1),
         normalScale: new THREE.Vector2(1, 1),
         roughnessMap: metalSurface, metalnessMap: metalSurface,
-        roughness: 1, metalness: 1, envMapIntensity: 0.7, vertexColors: true,
+        roughness: 1, metalness: 0.25, envMapIntensity: 0.7, vertexColors: true,
       });
       m.metalMat = new THREE.MeshStandardMaterial({
         color: 0x74797f,
@@ -2960,7 +3146,7 @@ export function buildCity(scene, painted = null) {
   registerFloors(world, floors);
   registerHeaps(world, heaps);
   // the doors last of all: they swing, so nothing placed may lean on them
-  const doors = reserve(() => registerDoors(scene, world, doorMat));
+  const doors = reserve(() => registerDoors(scene, world, doorMat, glassMat));
   // every collider is in now: index them (see `World.seal`)
   world.seal();
 
@@ -2980,7 +3166,7 @@ export function buildCity(scene, painted = null) {
   // the bake and beside it, because it is wider than any patch and would
   // stretch the edge patches' batches over the whole landscape, and inside
   // `decor`, because none of it can be reached and so none of it is the city.
-  const outer = decor(() => outskirts(scene, facades, terrainMat, debrisMat, darkConcrete));
+  const outer = decor(() => outskirts(scene, facades, terrainMat, debrisMat, darkConcrete, asphaltMat, concreteMat));
 
   // The street grid, published rather than re-derived. `roadMarkings` lays
   // paint off these three numbers and the check that the paint is on the road

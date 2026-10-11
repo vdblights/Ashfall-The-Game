@@ -56,12 +56,19 @@ export async function launchBrowser({ headed = false } = {}) {
 }
 
 /**
+ * How long a boot may take. It was 60 s, and boots on a slow machine came
+ * within two seconds of that alone (41-58 s), and past it with a second
+ * game booting alongside; a boot that genuinely hangs still fails, later.
+ */
+const BOOT_WAIT_MS = Number(process.env.ASHFALL_BOOT_MS) || 120000;
+
+/**
  * Wait for the menu, then (by default) stop the render loop and restart the
  * random stream. Without the freeze the loop keeps stepping the game on real
  * frame timing while a script steps it manually, and nothing repeats.
  */
 export async function waitForBoot(page, { freeze = true, seed } = {}) {
-  await page.waitForFunction(() => window.__game && window.__game.state === 'menu', null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__game && window.__game.state === 'menu', null, { timeout: BOOT_WAIT_MS });
   if (freeze) {
     await page.evaluate((s) => {
       window.__game.renderer.setAnimationLoop(null);
@@ -300,7 +307,13 @@ export async function openGame(opts = {}) {
   await launch();
   const url = `http://localhost:${port}/index.html?seed=${seed}`;
   await page.goto(url, { waitUntil: 'load' });
-  await waitForBoot(page, { freeze, seed });
+  try {
+    await waitForBoot(page, { freeze, seed });
+  } catch (e) {
+    // a boot that never finishes usually threw on the way: say what
+    if (errors.length) e.message += `\n  page errors: ${errors.slice(0, 5).join(' | ')}`;
+    throw e;
+  }
 
   return {
     // getters, because `renew` swaps both out from under whoever holds this
