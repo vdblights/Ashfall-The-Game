@@ -2112,7 +2112,7 @@ export class Enemy {
         const nav = this.game.nav;
         const close = dist < CAST.far && world.lineOfSight(this.pos.x, this.pos.y + 1.5, this.pos.z, P.x, P.y, P.z)
           && (!nav || nav.clearLine(this.pos.x, this.pos.z, P.x, P.z));
-        if (close || !nav || !this._route(nav, move)) move.set(dx / (dist || 1), 0, dz / (dist || 1));
+        if (close || !nav || !this._route(nav, move, world)) move.set(dx / (dist || 1), 0, dz / (dist || 1));
       }
     }
     const speed = this.type.speed * (dist > CAST.far ? 1.2 : dist < CAST.near + 1.5 ? 0.55 : 1);
@@ -2151,14 +2151,25 @@ export class Enemy {
    * field. A hostile gets out of that shoulder by its avoidance; a holdout
    * has none, and steering straight at the player from there is steering
    * into the wall it is against.
+   *
+   * Only a cell it can step to: the nearest by the field can be the far side
+   * of what it is pressed against. A holdout that had opened a shop's door
+   * stood against the open leaf, inside the shoulder the field keeps round
+   * it, and stepped for the cell past the leaf until its clock ran out — a
+   * cell one diagonal back led round. Asked at the knee, so a kerb is a step
+   * and a door is not.
    */
-  _route(nav, out) {
+  _route(nav, out, world) {
     if (nav.heading(this.pos.x, this.pos.z, out)) return true;
     let best = -1, bx = 0, bz = 0;
+    const y = this.pos.y + 0.5;
     for (let k = 0; k < 8; k++) {
       const a = (k / 8) * Math.PI * 2, ox = Math.cos(a), oz = Math.sin(a);
-      const c = nav.costAt(this.pos.x + ox * nav.cell, this.pos.z + oz * nav.cell);
-      if (c > 0 && (best < 0 || c < best)) { best = c; bx = ox; bz = oz; }
+      const tx = this.pos.x + ox * nav.cell, tz = this.pos.z + oz * nav.cell;
+      const c = nav.costAt(tx, tz);
+      if (c <= 0 || (best >= 0 && c >= best)) continue;
+      if (world && !world.lineOfSight(this.pos.x, y, this.pos.z, tx, y, tz)) continue;
+      best = c; bx = ox; bz = oz;
     }
     if (best < 0) return false;
     out.set(bx, 0, bz);

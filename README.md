@@ -712,12 +712,13 @@ A few notes on the implementation:
   canvas at boot, every sound is synthesised from noise bursts and oscillator
   envelopes, and every model is assembled out of chamfered boxes, side
   profiles, lathes, and sections swept along a line.
-- **What you can see, you can bump into.** Every heap of rubble and every
-  fallen slab carries colliders cut to its own shape — a stack of tiers
-  shallower than a step, each fitted to the heap's cross-section at that
-  height — so a mound stops you at its foot and you can scramble up it with
-  any part of you on it, and it stops a bullet. Only a fallen slab, leaning
-  at a wall's pitch, is too steep to climb. A gutted ruin's windows are real
+- **What you can see, you can bump into.** Every heap of rubble carries
+  colliders cut to its own shape — a stack of tiers shallower than a step,
+  each fitted to the heap's cross-section at that height — so a mound stops
+  you at its foot and you can scramble up it with any part of you on it,
+  and it stops a bullet. A fallen slab of floor lies with one edge on the
+  lot and leans up from it, and its own plane is what you walk up, stand
+  on, see over and shoot. A gutted ruin's windows are real
   holes in its walls: you see through them into the courtyard and shoot
   through them, and so does whoever is in there, and its walls come down
   at the top in broken steps where the floors tore away. A heap is a

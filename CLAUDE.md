@@ -851,11 +851,8 @@ These each cost real debugging time. Changing them needs a reason.
   the radius it was given: you scramble onto loose rubble with any part of
   you on it, and only rubble — a kerb or a roof edge still needs the floor
   under your feet. Walking each heap's summit from four sides: 116 of 151
-  reached against 46. What is left is the leaning slabs, whose tiers rise
-  0.6 m apiece over the street: a wall, walked round. Their tiers carry
-  `slab`, and the route field bakes them as the walls they are, because a
-  holdout has no avoidance to be turned by: on the larger sector the field
-  led one into a slab between it and its pickup, and it stood there. A heap that takes
+  reached against 46. The leaning slabs were the rest, tiers 0.6 m apart
+  and a wall; they are ramps now (the next invariant). A heap that takes
   your weight in a shop's doorway puts your head in the floor over it, and
   one shop on seed 1 could not be walked into; rubble in a doorway's
   approach is cleared the way a perch's is (7, 6 and 6 heaps on the pinned
@@ -871,6 +868,43 @@ These each cost real debugging time. Changing them needs a reason.
   colliders are cut from its shape as before. Baking the steep
   tiers as walls was tried first and taken out: it cut 1.3-1.9% of the
   sector into pockets, and 0.6% even with no shoulder round them.
+- **A fallen slab is a ramp, and its plane is its collider.** A rubble
+  lot's three fallen slabs leant on two axes at once, up to 52 degrees,
+  hanging in the air at both ends, and were cut into tiers 0.6 m apart: a
+  wall. Each now lies with its low edge on the lot's floor and leans up
+  from it at 13-31 degrees (`buildRubbleLot`), its pose taken off the rolls
+  it always drew, in the same order, so the stream and everything placed
+  before the rubble are where they were. Its collider is one turned box
+  (`registerHeaps`), solid from the lot to the slab's own plane, carrying
+  that plane as `surface` the way a dropped kerb's apron does, and flagged
+  `ramp` as well as `heap` and `slab`. A dropped kerb never stands a step
+  high, so only `groundHeight` and `bounceSphere` had ever asked a surface;
+  a slab stands up to 3 m, so four more readers ask it, and each was
+  confirmed to bite on its own. **`resolve`** lets a body onto it wherever
+  the plane within its radius is a step over its feet (0 of 14 slabs walked
+  up without). **`groundHeight`** gives it a floor's reach, not a heap's:
+  a plane with edges is stood on as a floor is (5 of 5 held a body up a
+  foot's width off their side with `HEAP_REACH`). **`lineOfSight`** asks
+  the plane (`_blockedByRamp`): the plane and the segment are both linear
+  along it, so it is under the plane somewhere over the footprint only if
+  it is at one end of the stretch that crosses it (0 of 5 seen over the
+  foot when it read the box's top). **`blocked`** reads it as tall only
+  where it is, so steering does not turn aside at a slab's foot (0 of 5
+  feet open without). The route field still bakes it as a wall, because a
+  holdout has no avoidance to be turned by. `a fallen slab is a ramp` walks
+  up every slab whose run nothing else crosses (three to a 28 m lot, they
+  cross each other and the lot's container often: 14 of 34 on seed 1), and
+  reads the drawn plane against the footing (0.6 mm), a frame's step on
+  the way up (4.9 cm), walks into the high side, a sight line over the
+  foot and under the plane, a shot and a grenade; a cant put back on the
+  pose fails it at 2.09 m. **What cutting a heap costs is a bill, paid
+  whether it is cut or cleared** (`heapBill`). Cutting reads a copy of the
+  heap's geometry without its index, and that copy is a geometry, a UUID:
+  only the heaps that reached the cutting paid it, so which heaps a perch
+  or a doorway cleared — which is their shape — moved every spawn, and the
+  slabs' new poses did, by three more cleared on seed 1. Every heap pays it
+  now, and the copy is made in a `reserve`. Proved by the old poses under
+  the new bill: three fewer slabs cleared and the same three marks.
 - **Line of sight must stay symmetric.** It is a three-slab segment test. An
   earlier version only checked height at the entry point, which let a hostile
   see a target that could not see it back.
@@ -1891,7 +1925,16 @@ These each cost real debugging time. Changing them needs a reason.
   steering into the wall. A hostile gets out of that with its avoidance,
   and a holdout has none, so `_route` steps to the cheapest open cell
   beside it (`NavGrid.costAt`). Without that, on seed 1 a holdout cut loose
-  79 m from its pickup moved 6 m in a minute. **A lieutenant is a raider
+  79 m from its pickup moved 6 m in a minute. **Only a cell it can step
+  to**, asked as a sight line at the knee: a holdout that had opened a
+  shop's door stood against the open leaf, inside the shoulder round it,
+  and stepped for the cheapest cell — the far side of the leaf — until its
+  clock ran out. It was found by the floors check when the fallen slabs
+  moved the random draws under it onto that pickup, which is the ninth
+  trap's noise doing a check's work, and is guarded on purpose now: the
+  doors check stands a holdout against each face of every open leaf where
+  the field has an answer within a cell, and asks it out of the shop (42 of
+  42; 37 with the old step). **A lieutenant is a raider
   with `flee`**, walking a second `NavGrid` built from his exit (the class
   imports nothing, so a second instance is free of the stream). His
   `escort`s keep with him until something alerts them. While a charge is
@@ -2350,6 +2393,19 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the fittings took the last buildable item off the list:
+the fallen slabs in a rubble lot are ramps (invariant above). It found two
+things on the way that were older than it. The boot mark depended on which
+heaps were cleared, which is a shape, through the copy cutting a heap
+makes; every heap pays for that copy now. And a holdout against an open
+door leaf stepped for the far side of it; the floors check found that when
+the slabs moved the runtime draws under it onto one pickup, and the same
+pickup forced on `main` stalled the same way. What it cost: on seed 1 the
+203 tier boxes are 34 ramps, and nothing drawn changed in count, so no
+frame was measured. The layout check was re-measured once, with the
+reason; `placed`, `fpPlaced` and the perches are unchanged on all three
+pinned seeds.
 
 The pass after the outskirts went indoors, in rendered frames from every
 shop's doorway, and found the rooms read as empty car parks: every counter
@@ -3651,13 +3707,16 @@ Suggested next work, in the order I would do it:
    scrip) are first guesses against about 1,500 points a wave early on.
    Whether a run can afford the plate carrier before wave 4, and whether
    anyone buys optics, is a play question.
-3. **A leaning slab as a ramp, if play wants one.** A fallen slab in a
-   rubble lot is the one heap left that a body cannot climb: its tiers
-   nest within centimetres and rise 0.6 m apiece. It is a slope, so it
-   could be a floor with a `surface`, the way a dropped kerb is, rather
-   than a stack of tiers — the slab's own plane, and nothing between it
-   and the ground under it walkable. Whether anyone wants to run up one is
-   a play question; until then the route field bakes it as a wall.
+3. **Lay a rubble lot's slabs clear of each other.** Three slabs and a
+   container are dropped within 7 m of a 28 m lot's middle, and on seed 1
+   20 of 34 slabs have another slab or the container across their run (by
+   their bounding boxes, which errs toward crossing), so
+   the ramp ends in a wall part way up. The rolls cannot move, but which
+   way a slab leans and where along its turn it lies are free (a hash, as
+   the pitch is off the old tilt); a slab could try its other side, and
+   the container could be settled against the slabs if they were in the
+   box list when it goes down — which would move the layout, and want the
+   layout check re-measured with the reason.
 
 One piece of housekeeping that cannot be done from here: the merged branch
 `claude/project-memory` still exists on the remote. Deleting it returns 403
