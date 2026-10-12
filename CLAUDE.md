@@ -29,7 +29,10 @@ builds, never to play.
   against `main` — do not leave the branch sitting pushed and wait to be
   asked. Every PR in this repo's history came off that branch, which is
   restarted from `main` after each merge rather than stacked on finished
-  history.
+  history — except Dependabot's (`.github/dependabot.yml`), one a week at
+  most for the npm tools and one for the workflow's actions, each off a
+  branch of its own. Neither touches the game; three.js is vendored and
+  updated by hand.
 - **Do not write the number of checks down either.** It was restated in
   `CLAUDE.md` and `README.md`, and drifted twice: once when one file was
   updated and the other was not, and once when neither was, across two whole
