@@ -3699,17 +3699,19 @@ export function buildCity(scene, painted = null) {
 
   /**
    * Lay a rubble lot's fallen slabs where each one's run is its own. A slab
-   * is tried near where it was rolled, at its rolled turn and a quarter and
-   * an eighth either side of it, leaning either way, and takes the nearest
-   * pose whose run, and the 1.6 m of lot in front of its foot that you walk
-   * onto it from, stand inside the lot and clear of everything standing in
-   * it — the container, the slabs laid before it and their feet. A heap of
-   * rubble is a cost rather than a wall, because there are fourteen to a
-   * lot; one the slab still lies across, or that stands in front of its
-   * foot, is crushed (`crushed`) and cleared with the rubble a perch clears. Nothing here draws on the
-   * stream: the rolls were drawn already and the slabs are not colliders
-   * until the heaps are registered, last, so nothing placed after them saw
-   * where they lie. A slab with no clear pose lies as it was rolled.
+   * is tried near where it was rolled, at its rolled turn, 22.5 and 45
+   * degrees either side of it and a right angle off it, leaning either way,
+   * and takes the nearest pose whose run, and the 1.6 m of lot in front of
+   * its foot that you walk onto it from, stand inside the lot and clear of
+   * everything standing in it — the container, the slabs laid before it
+   * and their feet; in a lot too crowded for that, anywhere in the lot with
+   * half the gap. A heap of rubble is a cost rather than a wall, because
+   * there are fourteen to a lot; one the slab still lies across, or that
+   * stands in front of its foot, is crushed (`crushed`) and cleared with
+   * the rubble a perch clears. Nothing here draws on the stream: the rolls
+   * were drawn already and the slabs are not colliders until the heaps are
+   * registered, last, so nothing placed after them saw where they lie. A
+   * slab with no clear pose lies as it was rolled.
    */
   function layFallen(g, w, cx, cz, fallen, piles) {
     const half = LOT / 2 - 0.4, GAP = 0.6, FOOT = 1.6, REACH = 7, HEAP = 2.5;
