@@ -5865,12 +5865,20 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
   // the same stair not to stoop (headroom is asked from the hips, or the
   // tread two steps up is a ceiling), and stands a warlord at the door, who
   // does not fit stooped and must not go in.
-  const r = await page.evaluate(() => {
+  //
+  // It runs as an evaluate a stairwell rather than one for the lot. As one,
+  // it held the page for 95-125 s of unbroken script on CI, longer than any
+  // other check, and on every CI run that read it after the larger sector
+  // the reload after it timed out; on all but one of them the runner was
+  // shut down while it waited, and every check after it went unrun. It
+  // never failed here, alone or in its shard. A stairwell is a few seconds.
+  const stairs = await page.evaluate(() => {
     const g = window.__game, w = g.world, p = g.player;
     g.startRun();
     g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
     const v = new p.position.constructor();
-    const through = (e) => {
+    const T = window.__stoopUp = { relocs: 0, peak: 0, stoop: 0 };
+    T.through = (e) => {
       let worst = 0;
       e.group.updateMatrixWorld(true);
       for (const m of e.hitMeshes) {
@@ -5883,14 +5891,13 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
       }
       return worst;
     };
-    const hold = (x, y, z) => () => {
+    T.hold = (x, y, z) => () => {
       p.feetY = y; p.onGround = true; p.velocity.set(0, 0, 0);
       p.position.set(x, y + p.eyeHeight, z); p.health = 100;
     };
-    let relocs = 0;
     const relocate = g.relocateEnemy.bind(g);
-    g.relocateEnemy = (e) => { relocs++; return relocate(e); };
-    const put = (kind, elite, s) => {
+    g.relocateEnemy = (e) => { T.relocs++; return relocate(e); };
+    T.put = (kind, elite, s) => {
       for (const e of g.enemies) { e.group.visible = false; g._recycle(e); }
       g.enemies.length = 0;
       const d = w.rooms.find((rm) => rm.stair === s).doors[0];
@@ -5912,35 +5919,44 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
       e.nextFire = Infinity; e.frags = 0; e.postAfter = Infinity;
       return { e, d };
     };
-    const out = { stairs: w.stairs.length, follow: [], peak: 0, stoop: 0, scavStoop: 0, warlord: null };
-    for (const s of w.stairs) {
+    return w.stairs.length;
+  });
+  const follow = [];
+  for (let i = 0; i < stairs; i++) {
+    follow.push(await page.evaluate((i) => {
+      const g = window.__game, w = g.world, p = g.player, T = window.__stoopUp;
+      const s = w.stairs[i];
       const exit = s.path[s.path.length - 1];
       p.reset(exit.x, exit.z);
-      let pin = hold(exit.x, s.deck, exit.z);
+      let pin = T.hold(exit.x, s.deck, exit.z);
       pin();
-      const { e, d } = put('brute', false, s);
+      const { e, d } = T.put('brute', false, s);
       let upAt = null, downAt = null;
       for (let f = 0; f < 30 * 40 && upAt === null; f++) {
         g.time += 1 / 30; pin(); e.nextFire = Infinity; g.step(1 / 30);
-        if (e.stair) { out.stoop = Math.max(out.stoop, e.stoop); if (f % 3 === 0) out.peak = Math.max(out.peak, through(e)); }
+        if (e.stair) { T.stoop = Math.max(T.stoop, e.stoop); if (f % 3 === 0) T.peak = Math.max(T.peak, T.through(e)); }
         if (e.pos.y > s.deck - 0.2) upAt = +(f / 30).toFixed(1);
       }
       const qx = d.x + d.nx * 6, qz = d.z + d.nz * 6;
       p.reset(qx, qz);
-      pin = hold(qx, p.feetY, qz);
+      pin = T.hold(qx, p.feetY, qz);
       for (let f = 0; upAt !== null && f < 30 * 40 && downAt === null; f++) {
         g.time += 1 / 30; pin(); e.nextFire = Infinity; g.step(1 / 30);
-        if (e.stair && f % 3 === 0) out.peak = Math.max(out.peak, through(e));
+        if (e.stair && f % 3 === 0) T.peak = Math.max(T.peak, T.through(e));
         if (e.pos.y < 0.6 && !e.stair) downAt = +(f / 30).toFixed(1);
       }
-      out.follow.push({ upAt, downAt });
-    }
+      return { upAt, downAt };
+    }, i));
+  }
+  const r = await page.evaluate(() => {
+    const g = window.__game, w = g.world, p = g.player, T = window.__stoopUp;
+    const out = { stairs: w.stairs.length, scavStoop: 0, warlord: null };
 
     // a scavenger on the first stair, which has all the headroom it needs
     const s0 = w.stairs[0], exit0 = s0.path[s0.path.length - 1];
     p.reset(exit0.x, exit0.z);
-    const pin0 = hold(exit0.x, s0.deck, exit0.z);
-    const sc = put('scavenger', false, s0).e;
+    const pin0 = T.hold(exit0.x, s0.deck, exit0.z);
+    const sc = T.put('scavenger', false, s0).e;
     for (let f = 0; f < 30 * 20 && sc.pos.y < s0.deck - 0.2; f++) {
       g.time += 1 / 30; pin0(); g.step(1 / 30);
       if (sc.stair) out.scavStoop = Math.max(out.scavStoop, sc.stoop);
@@ -5948,7 +5964,7 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
 
     // and a warlord at the same door, who would not fit stooped
     p.reset(exit0.x, exit0.z);
-    const wl = put('brute', true, s0).e;
+    const wl = T.put('brute', true, s0).e;
     let went = false, top = 0;
     for (let f = 0; f < 30 * 20; f++) {
       g.time += 1 / 30; pin0(); wl.nextFire = Infinity; g.step(1 / 30);
@@ -5956,10 +5972,11 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
       top = Math.max(top, wl.pos.y);
     }
     out.warlord = { went, top: +top.toFixed(2) };
-    out.relocs = relocs;
-    out.peak = +out.peak.toFixed(3); out.stoop = +out.stoop.toFixed(2); out.scavStoop = +out.scavStoop.toFixed(2);
+    out.relocs = T.relocs;
+    out.peak = +T.peak.toFixed(3); out.stoop = +T.stoop.toFixed(2); out.scavStoop = +out.scavStoop.toFixed(2);
     return out;
   });
+  r.follow = follow;
   // Measured on seed 1: 13 of 13 stairwells, a juggernaut up in 17-26 s and
   // back down in 13-18 s, stooped by up to 0.47 of its height's units and no
   // point of it through a flight; no relocations; a scavenger not stooped at
