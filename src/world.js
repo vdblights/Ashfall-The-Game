@@ -136,7 +136,9 @@ export class World {
   // A floor may also carry `surface(lx, lz, r)`: its height at a point in its
   // own frame, the highest within `r`. `top` is then its highest anywhere, so
   // every reader that only wants a bound still has one; `groundHeight` and
-  // `bounceSphere` ask the surface. A kerb dropped at a crossing is one.
+  // `bounceSphere` ask the surface. A kerb dropped at a crossing is one. A
+  // fallen slab is another (`ramp`, turned, solid under its plane) and stands
+  // well over a step, so `resolve`, `blocked` and `lineOfSight` ask it too.
 
   /**
    * Register a box turned `rot` about Y, the way three turns a mesh.
@@ -318,6 +320,9 @@ export class World {
       const dx = lx - nearX, dz = lz - nearZ;
       const distSq = dx * dx + dz * dz;
       if (distSq >= radius * radius) continue;
+      // a fallen slab is in the way only where it stands more than a step
+      // over the feet: walked up from its foot, a wall from its side
+      if (b.ramp && b.surface(lx, lz, radius) <= feet + step) continue;
 
       let px = 0, pz = 0;                      // the push, still in that frame
       if (distSq > 1e-6) {
@@ -361,7 +366,9 @@ export class World {
       // only from at or above its underside: `under` is how high the asker
       // is, so a body under a flight is not stood on the one over its head.
       if (b.base && (!b.deck || b.base > under)) continue;
-      const r = b.heap ? wide : radius;
+      // (a fallen slab is a heap to the layout, not to the feet: it is a
+      // plane with edges, and you stand on it the way you stand on a floor)
+      const r = b.heap && !b.slab ? wide : radius;
       if (x <= b.minX - r || x >= b.maxX + r
           || z <= b.minZ - r || z >= b.maxZ + r) continue;
       const rx = x - b.cx, rz = z - b.cz;
@@ -505,7 +512,10 @@ export class World {
       const rx = x - b.cx, rz = z - b.cz;
       const lx = b.cos * rx - b.sin * rz, lz = b.sin * rx + b.cos * rz;
       const dx = Math.max(0, Math.abs(lx) - b.hx), dz = Math.max(0, Math.abs(lz) - b.hz);
-      if (dx * dx + dz * dz < pad * pad) return true;
+      if (dx * dx + dz * dz >= pad * pad) continue;
+      // a fallen slab blocks the way only where it stands that tall
+      if (b.ramp && b.surface(lx, lz, pad) < minTop) continue;
+      return true;
     }
     return false;
   }
@@ -551,8 +561,12 @@ export class World {
       // the corners of the AABB that stick out past the prop. Confirm against
       // the footprint before calling the line blocked, or a container at an
       // angle gives cover from a metre to the side of itself.
-      // A door's bound is everything it sweeps, so a door always asks.
-      if ((box.sin !== 0 || box.door) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
+      // A door's bound is everything it sweeps, so a door always asks. A
+      // fallen slab's top is its high edge, and over its foot that is a
+      // metre or two of air, so it asks its own plane.
+      if (box.ramp) {
+        if (!this._blockedByRamp(box, ax, ay, az, dx, dy, dz)) continue;
+      } else if ((box.sin !== 0 || box.door) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
 
       return false;
     }
@@ -588,6 +602,35 @@ export class World {
     if (tA > t0) t0 = tA;
     if (tB < t1) t1 = tB;
     return t0 <= t1;
+  }
+
+  /**
+   * Whether a segment passes through a fallen slab: the solid under its
+   * plane, over its footprint. The plane is linear along the segment, and so
+   * is the segment's height, so the line is under the plane somewhere over
+   * the footprint only if it is under it at one end of the stretch that
+   * crosses the footprint. Symmetric, like every sight line.
+   */
+  _blockedByRamp(b, ax, ay, az, dx, dy, dz) {
+    const rx = ax - b.cx, rz = az - b.cz;
+    const ox = b.cos * rx - b.sin * rz, oz = b.sin * rx + b.cos * rz;
+    const ldx = b.cos * dx - b.sin * dz, ldz = b.sin * dx + b.cos * dz;
+    let t0 = 0, t1 = 1;
+    for (const [o, d, h] of [[ox, ldx, b.hx], [oz, ldz, b.hz]]) {
+      if (Math.abs(d) < 1e-12) {
+        if (o < -h || o > h) return false;
+        continue;
+      }
+      let tA = (-h - o) / d, tB = (h - o) / d;
+      if (tA > tB) { const t = tA; tA = tB; tB = t; }
+      if (tA > t0) t0 = tA;
+      if (tB < t1) t1 = tB;
+      if (t0 > t1) return false;
+    }
+    for (const t of [t0, t1]) {
+      if (ay + dy * t <= b.surface(ox + ldx * t, oz + ldz * t, 0)) return true;
+    }
+    return false;
   }
 
   /**

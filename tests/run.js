@@ -3324,6 +3324,50 @@ check('some doorways have doors: shut, a door is a wall, and anyone can open one
       }
       out.hostiles.push({ outAt, opened: d.open });
     }
+    // A holdout against an open leaf, on the room's side, the player out in
+    // the street: it comes out of the shop. Pressed against a leaf it stands
+    // in the shoulder the route field keeps round it, where `_route` steps
+    // for the cheapest cell beside it — and that was the far side of the
+    // leaf, which it walked into until its clock ran out. Staged only where
+    // the field has an answer within a cell, as `_route` asks it: a pocket
+    // behind a leaf's hinge, between the leaf and the wall, has none, and is
+    // nowhere a holdout is ever led.
+    g.shutDoors(true);
+    out.leaf = { staged: 0, out: 0, stuck: [] };
+    const V = new (p.position.constructor)();
+    for (const b of w.boxes.filter((o) => o.door)) {
+      const d = g.doors.list.reduce((a, q) => (Math.hypot(q.x - b.cx, q.z - b.cz) < Math.hypot(a.x - b.cx, a.z - b.cz) ? q : a));
+      // the player well out in the street, on open ground inside the sector:
+      // a shop on the edge has its doors onto a strip too narrow to stand
+      // far enough out, and a holdout stops 2.6 m short of you
+      const k = [12, 10, 14, 8].find((m) => {
+        const tx = d.x + d.nx * m, tz = d.z + d.nz * m, ty = w.groundHeight(tx, tz, 0.12, 0.6);
+        return Math.max(Math.abs(tx), Math.abs(tz)) < w.bounds - 3 && ty < 0.5 && !w.blocked(tx, tz, 0.5, ty + 0.3);
+      });
+      if (k === undefined) continue;
+      const qx = d.x + d.nx * k, qz = d.z + d.nz * k;
+      g.nav.update(qx, qz, true);
+      for (const side of [1, -1]) {
+        // off the leaf's face: its own +z is (sin, cos) in the world
+        const hx = b.cx + b.sin * side * (b.hz + 0.5), hz = b.cz + b.cos * side * (b.hz + 0.5);
+        const hy = w.groundHeight(hx, hz, 0.12, d.floor + 0.5);
+        if (Math.abs(hy - d.floor) > 0.1 || w.blocked(hx, hz, 0.38, hy + 0.3)) continue;
+        if ((hx - d.x) * d.nx + (hz - d.z) * d.nz > -0.3) continue;
+        if (!g.nav.heading(hx, hz, V) && ![0, 1, 2, 3, 4, 5, 6, 7].some((j) =>
+          g.nav.costAt(hx + Math.cos(j * Math.PI / 4) * g.nav.cell, hz + Math.sin(j * Math.PI / 4) * g.nav.cell) > 0)) continue;
+        for (const e of g.enemies) { e.alive = false; e.group.visible = false; }
+        g.enemies.length = 0;
+        p.reset(qx, qz); p.maxHealth = p.health = 1e6;
+        const h = g.spawnEnemy('holdout');
+        h.pos.set(hx, hy, hz); h.group.position.copy(h.pos); h.following = true;
+        window.__step(25);
+        out.leaf.staged++;
+        if ((h.pos.x - d.x) * d.nx + (h.pos.z - d.z) * d.nz > 1) out.leaf.out++;
+        else out.leaf.stuck.push([+hx.toFixed(1), +hz.toFixed(1)]);
+      }
+    }
+    for (const e of g.enemies) { e.alive = false; e.group.visible = false; }
+    g.enemies.length = 0;
     g.shutDoors();
     // drawn in paint, with a vision panel in every leaf
     out.metalness = g.doors.drawn.material.metalness;
@@ -3354,7 +3398,11 @@ check('some doorways have doors: shut, a door is a wall, and anyone can open one
   expect(r.routed === n, `the route field reads ${r.routed} of ${n} doorways with doors as open`);
   const came = r.hostiles.filter((h) => h.outAt !== null && h.opened);
   expect(came.length === r.hostiles.length, `a hostile opened the door and came out of ${came.length} of ${r.hostiles.length} shops: ${JSON.stringify(r.hostiles)}`);
-  return { doors: `${n}/${r.doorways}`, hostiles: r.hostiles.map((h) => h.outAt) };
+  // Seed 1: 42 of 42 holdouts out; 37 of 42 with `_route` stepping for the
+  // cheapest cell whether or not it can reach it.
+  expect(r.leaf.staged >= 20 && r.leaf.out === r.leaf.staged,
+    `a holdout against an open leaf came out of the shop ${r.leaf.out} of ${r.leaf.staged} times: ${JSON.stringify(r.leaf.stuck.slice(0, 4))}`);
+  return { doors: `${n}/${r.doorways}`, hostiles: r.hostiles.map((h) => h.outAt), leaf: `${r.leaf.out}/${r.leaf.staged}` };
 });
 
 check('past the walls is the rest of the city, out to the hills, and none of it in reach', async (page) => {
@@ -3658,9 +3706,8 @@ check('rubble stops you and stops a bullet, and you can climb it', async (page) 
     // mound's shape at its height, so it nests only a little inside the one
     // under it, and a foot held up only by what is under its middle was
     // stopped at its radius by most pairs of them: one tall step.
-    // the mounds: a fallen slab's tiers rise 0.6 m apiece, a wall walked
-    // round by design, and a bigger sector has more rubble lots and so more
-    // of them, which as a share pulled the mounds' rate under the bar
+    // the mounds: a fallen slab is a ramp, one box with its own plane, and
+    // has its own check (`a fallen slab is a ramp`)
     const tiers = W.boxes.filter((b) => b.heap && !b.slab);
     const inside = (b, x, z) => {
       const rx = x - b.cx, rz = z - b.cz;
@@ -3709,12 +3756,154 @@ check('rubble stops you and stops a bullet, and you can climb it', async (page) 
   }
   // A heap holds a body up wherever the body touches it (`HEAP_REACH`).
   // Seed 1: 116 of 151 summits walked up, against 46 when a heap held you
-  // only under your middle. What is left is the leaning slabs, whose tiers
-  // rise 0.6 m apiece and overhang the street: a wall, walked round.
+  // only under your middle.
   const c = r.climbs;
   expect(c.walked >= c.summits * 0.9 && c.reached >= c.walked * 0.65,
     `walked up ${c.reached} of ${c.walked} heaps of rubble (${c.summits} summits): ${JSON.stringify(c.short)}`);
   return { ...r, ghost: undefined };
+});
+
+check('a fallen slab is a ramp: its plane is what you walk up, stand on, see over and shoot', async (page) => {
+  // A rubble lot's fallen slabs leant on two axes at once, up to 52 degrees,
+  // and their colliders were tiers 0.6 m apart: a wall, walked round. Each
+  // now lies with one edge on the lot and leans up from it at 13-31 degrees,
+  // and its collider is one turned box carrying the slab's own plane
+  // (`surface`), solid under it: `resolve` lets a body onto it wherever the
+  // plane is a step over its feet, `groundHeight` stands it on the plane,
+  // `lineOfSight` asks the plane, and `blocked` reads it as tall only where
+  // it is. Walked, sighted and shot on every slab whose run nothing else
+  // crosses — three to a lot, they cross each other and the lot's container
+  // often — the way `__place` asks for a clear firing line.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, W = g.world, p = g.player, V = p.position.constructor;
+    const ramps = W.boxes.filter((b) => b.ramp);
+    const meshes = W.solids.filter((m) => m.userData.ramp);
+    const overlaps = (o, b) => o.maxX > b.minX && o.minX < b.maxX && o.maxZ > b.minZ && o.minZ < b.maxZ;
+    // nothing else standing in its run; with `heaps` set, no rubble on it either
+    const clear = (b, heaps) => !W.boxes.some((o) => o !== b && !o.floor && o.top > 0.6
+      && (heaps || !(o.heap && !o.slab)) && overlaps(o, b));
+    const at = (b, lx, lz) => [b.cx + b.cos * lx + b.sin * lz, b.cz - b.sin * lx + b.cos * lz];
+    const out = { ramps: ramps.length, meshes: meshes.length, clear: 0, bare: 0 };
+
+    // the drawn top face against the footing: nowhere under it, and on a
+    // slab nothing crosses, exactly on it
+    let sunk = 0, off = 0;
+    const v = new V();
+    for (const m of meshes) {
+      m.updateMatrixWorld(true);
+      const b = ramps.find((o) => Math.hypot(o.cx - m.userData.ramp.cx, o.cz - m.userData.ramp.cz) < 1e-6);
+      const q = m.geometry.attributes.position, n = m.geometry.attributes.normal;
+      for (let i = 0; i < q.count; i++) {
+        if (n.getY(i) < 0.9) continue;
+        v.fromBufferAttribute(q, i).applyMatrix4(m.matrixWorld);
+        const gh = W.groundHeight(v.x, v.z, 0.001, v.y + 0.05);
+        sunk = Math.max(sunk, v.y - gh);
+        if (b && clear(b, true)) off = Math.max(off, Math.abs(gh - v.y));
+      }
+    }
+    out.sunk = +sunk.toFixed(4); out.off = +off.toFixed(4);
+
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    g.input.locked = true;
+    const walk = { up: 0, short: [], step: 0 };
+    const side = { tried: 0, stopped: 0, through: [] };
+    let lifted = 0, over = 0, under = 0, shot = 0, nade = 0, footOpen = 0, highShut = 0, high = 0;
+    const misses = [];
+    for (const b of ramps) {
+      if (!clear(b, false)) continue;
+      out.clear++;
+      const bare = clear(b, true);
+      if (bare) out.bare++;
+      const ux = b.sin, uz = b.cos;           // uphill: the box's own +z
+
+      // up it from its foot
+      const [sx, sz] = at(b, 0, -b.hz - 1.2);
+      p.reset(sx, sz); p.yaw = Math.atan2(-ux, -uz); p.pitch = 0;
+      g.input.keys.clear(); g.input.keys.add('KeyW');
+      let feet = p.feetY, peak = feet, step = 0;
+      for (let f = 0; f < 60 * 6; f++) {
+        g.time += 1 / 60; p.health = 100; g.step(1 / 60);
+        step = Math.max(step, Math.abs(p.feetY - feet)); feet = p.feetY; peak = Math.max(peak, feet);
+        if ((p.position.x - b.cx) * ux + (p.position.z - b.cz) * uz > b.hz * 0.6) break;
+      }
+      g.input.keys.clear();
+      const want = b.surface(0, b.hz * 0.6, 0);
+      if (peak >= want - 0.15) walk.up++;
+      else if (walk.short.length < 4) walk.short.push({ at: [Math.round(b.cx), Math.round(b.cz)], want: +want.toFixed(2), peak: +peak.toFixed(2) });
+      if (bare) walk.step = Math.max(walk.step, step);
+
+      if (!bare) continue;
+      // into its side where it stands a wall: stopped, not on it (on a slab
+      // with no rubble by it, which you would rightly scramble up)
+      for (const sgn of [1, -1]) {
+        const lz = b.hz * 0.6;
+        if (b.surface(0, lz, 0.45) < 0.35 + 0.55 + 0.15) continue;
+        const [qx, qz] = at(b, sgn * (b.hx + 1.2), lz);
+        const fy = W.groundHeight(qx, qz, 0.12, 0.6);
+        if (fy > 0.5 || W.blocked(qx, qz, 0.5, fy + 0.3)) continue;
+        p.reset(qx, qz); p.yaw = Math.atan2(sgn * b.cos, -sgn * b.sin); p.pitch = 0;
+        g.input.keys.clear(); g.input.keys.add('KeyW');
+        let worst = 0, inside = false;
+        for (let f = 0; f < 60 * 2; f++) {
+          g.time += 1 / 60; p.health = 100; g.step(1 / 60);
+          worst = Math.max(worst, p.feetY);
+          const rx = p.position.x - b.cx, rz = p.position.z - b.cz;
+          if (Math.abs(b.cos * rx - b.sin * rz) < b.hx - 0.05) inside = true;
+        }
+        g.input.keys.clear();
+        side.tried++;
+        if (!inside && worst < 0.6) side.stopped++;
+        else if (side.through.length < 4) side.through.push({ at: [Math.round(b.cx), Math.round(b.cz)], feet: +worst.toFixed(2), inside });
+        break;
+      }
+
+      // beside it, a foot's width off its side: on the lot, not lifted onto it
+      const [bx, bz] = at(b, b.hx + 0.3, 0);
+      if (W.groundHeight(bx, bz, 0.12, 5) > 0.5) lifted++;
+      // a line across it a hand over its plane near the foot clears it, and
+      // one just under its plane does not
+      const lz = -b.hz * 0.6, h = b.surface(0, lz, 0);
+      const [ax, az] = at(b, -b.hx - 2, lz), [cx, cz] = at(b, b.hx + 2, lz);
+      if (W.lineOfSight(ax, h + 0.25, az, cx, h + 0.25, cz)) over++; else misses.push({ over: [Math.round(b.cx), Math.round(b.cz)] });
+      if (!W.lineOfSight(ax, h - 0.15, az, cx, h - 0.15, cz)) under++; else misses.push({ under: [Math.round(b.cx), Math.round(b.cz)] });
+      // a shot straight down stops on the slab you see, at the plane
+      const mid = b.surface(0, 0, 0);
+      const ray = new THREE.Raycaster(new V(b.cx, mid + 3, b.cz), new V(0, -1, 0));
+      const hit = ray.intersectObjects(W.solids, false)[0];
+      if (hit && Math.abs(hit.point.y - mid) < 0.05) shot++; else misses.push({ shot: hit ? +hit.point.y.toFixed(2) : null, mid: +mid.toFixed(2) });
+      // a grenade dropped on it comes to rest on the plane
+      const pos = new V(b.cx, mid + 2, b.cz), vel = new V(0, 0, 0), R = 0.08;
+      for (let f = 0; f < 240; f++) { vel.y -= 19 * (1 / 60); pos.addScaledVector(vel, 1 / 60); W.bounceSphere(pos, vel, R); }
+      const rx = pos.x - b.cx, rz = pos.z - b.cz, lzz = b.sin * rx + b.cos * rz;
+      if (Math.abs(pos.y - R - b.surface(0, lzz, 0)) < 0.06) nade++; else misses.push({ nade: +pos.y.toFixed(2), plane: +b.surface(0, lzz, 0).toFixed(2) });
+      // steering reads its foot as open and its high end as a wall
+      const [fx, fz] = at(b, 0, -b.hz * 0.7);
+      if (!W.blocked(fx, fz, 0.4, 1.2)) footOpen++;
+      if (b.surface(0, b.hz * 0.8, 0) > 1.6) {
+        high++;
+        const [tx, tz] = at(b, 0, b.hz * 0.8);
+        if (W.blocked(tx, tz, 0.4, 1.2)) highShut++;
+      }
+    }
+    return { ...out, walk, side, lifted, over, under, shot, nade, footOpen, high, highShut, misses: misses.slice(0, 6) };
+  });
+  // Seed 1: 34 slabs, 14 with a clear run, every one walked up; the drawn
+  // plane within a millimetre of the footing. Broken at the readers, one at
+  // a time: see CLAUDE.md, under the rubble invariant.
+  expect(r.ramps >= 20 && r.meshes === r.ramps, `${r.ramps} fallen slabs carry a ramp, of ${r.meshes} drawn`);
+  expect(r.clear >= 8 && r.bare >= 4, `only ${r.clear} fallen slabs with a clear run (${r.bare} with no rubble on them)`);
+  expect(r.sunk < 0.01, `the footing stands ${r.sunk} m under a slab's drawn face`);
+  expect(r.off < 0.01, `a clear slab's drawn face is ${r.off} m off the footing`);
+  expect(r.walk.up === r.clear, `walked up ${r.walk.up} of ${r.clear} fallen slabs: ${JSON.stringify(r.walk.short)}`);
+  expect(r.walk.step < 0.1, `walking up a fallen slab stepped ${r.walk.step.toFixed(3)} m in a frame`);
+  expect(r.side.tried >= 3 && r.side.stopped === r.side.tried, `a slab's high side stopped ${r.side.stopped} of ${r.side.tried} walks into it: ${JSON.stringify(r.side.through)}`);
+  expect(r.lifted === 0, `${r.lifted} of ${r.bare} slabs hold a body up a foot's width off their side`);
+  expect(r.over === r.bare && r.under === r.bare, `over the foot ${r.over}, under the plane ${r.under}, of ${r.bare} slabs: ${JSON.stringify(r.misses)}`);
+  expect(r.shot === r.bare && r.nade === r.bare, `a shot stopped on ${r.shot} and a grenade rested on ${r.nade} of ${r.bare} slabs: ${JSON.stringify(r.misses)}`);
+  expect(r.footOpen === r.bare && r.high >= 2 && r.highShut === r.high, `steering reads ${r.footOpen} of ${r.bare} feet as open and ${r.highShut} of ${r.high} high ends as a wall`);
+  return { ramps: r.ramps, clear: r.clear, bare: r.bare, up: r.walk.up, step: +r.walk.step.toFixed(3), side: `${r.side.stopped}/${r.side.tried}`, off: r.off };
 });
 
 check('every prop stands clear of the rest, inside the sector, and on its floor', async (page) => {
@@ -6456,10 +6645,24 @@ check('a seed still lays out the city it did', async (page) => {
   // collider and a raycast mesh a leaf, hung after everything else. The
   // prints leave them out, and every print, perch and mark is what it was;
   // the counts are the leaves. Before them: 7724/2754, 6966/2670, 6739/2660.
+  //
+  // And a rubble lot's fallen slabs are ramps: each lies on the lot and
+  // leans up from it, one turned box with its own plane where it was a
+  // stack of tiers, its pose taken off the rolls it always drew. Everything
+  // placed before the rubble (`placed`, `fpPlaced`) and the perches are
+  // unchanged on all three seeds; the counts are the tiers become one box
+  // each, and on seed 1 three more slabs a perch or doorway clears. The mark
+  // moved once, on purpose: cutting a heap copies its geometry, a UUID, and
+  // only the heaps that reached the cutting paid it, so which heaps were
+  // cleared — a matter of their shapes — moved every spawn. Every heap pays
+  // it now, cleared or cut (`heapBill`). Proved by putting the old poses
+  // back under the new bill: seed 1 clears three fewer slabs and the same
+  // three marks come out. Before it: 7750/2780 'ccb93635' 220091255,
+  // 6996/2700 'f1381805' 157064770, 6773/2694 '77a1d141' 475216655.
   const want = {
-    1: { boxes: 7750, solids: 2780, perches: 32, fp: 'ccb93635', placed: 7040, fpPlaced: '25801dfc', mark: 220091255 },
-    7: { boxes: 6996, solids: 2700, perches: 26, fp: 'f1381805', placed: 6435, fpPlaced: '311f203e', mark: 157064770 },
-    20260101: { boxes: 6773, solids: 2694, perches: 17, fp: '77a1d141', placed: 6318, fpPlaced: '5c4a4264', mark: 475216655 },
+    1: { boxes: 7581, solids: 2777, perches: 32, fp: '1e5c2df4', placed: 7040, fpPlaced: '25801dfc', mark: -1299344873 },
+    7: { boxes: 6881, solids: 2700, perches: 26, fp: 'ce7ef956', placed: 6435, fpPlaced: '311f203e', mark: -98700018 },
+    20260101: { boxes: 6703, solids: 2694, perches: 17, fp: '1417d6a', placed: 6318, fpPlaced: '5c4a4264', mark: 979169931 },
   };
   // `mark` is where the seeded stream stands at the end of boot, which is
   // the stream every spawn is picked from. Every pass that changed how

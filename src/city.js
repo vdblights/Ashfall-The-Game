@@ -692,12 +692,16 @@ function registerFloors(world, slabs) {
  * something you walked straight through, and the piles stopped no bullets
  * either. Reported from play as objects you can clip right through.
  *
+ * A fallen slab is a plane, so it is one turned box carrying that plane
+ * (`surface`), which the readers in `world.js` ask: a ramp you walk up. It
+ * was a stack of tiers 0.6 m apart, a wall walked round.
+ *
  * A box with the heap's height and footprint would make every mound a flat
  * topped pillar you stood on in mid-air over its slopes. So each one is cut
  * into tiers a third of a metre deep, and each tier is the rectangle that
  * best fits the heap's own cross-section from the middle of that tier to its
  * top (which, for a mound, is just the middle): a mound
- * comes out a stepped cone you scramble up, a fallen slab a ramp of steps.
+ * comes out a stepped cone you scramble up.
  * The rectangle is the smallest of sixteen turns round the section's hull,
  * shrunk to the hull's own area, so a round section claims no more ground
  * than it covers and a flat one claims all of it.
@@ -707,11 +711,37 @@ function registerFloors(world, slabs) {
  * other collider in a seed is where it was, and only the boxes appended here
  * are new. The piles join the raycast list too; the slabs were already in it.
  */
+/** What a heap costs the seeded stream to be cut into colliders, paid whether it is or not. */
+function heapBill(m) {
+  if (m.geometry.index) spend(UUID_COST);
+}
+
 function registerHeaps(world, heaps) {
   const TIER = 0.33;
   for (const m of heaps) {
     m.updateMatrixWorld(true);
-    const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+    // Cutting a heap reads a copy of its geometry without an index, and that
+    // copy is a geometry, which costs the seeded stream a UUID. It used to be
+    // paid only by the heaps that reached here, so which heaps a perch or a
+    // doorway clears — a matter of their shapes — moved every spawn; now
+    // every heap pays it once, cleared or cut, as a bill (`heapBill`), and
+    // the copy is made where it costs nothing.
+    heapBill(m);
+    const ramp = m.userData.ramp;
+    if (ramp) {
+      // A fallen slab is one turned box, solid from the lot to the slab's own
+      // plane: `top` is its high edge, for every reader that wants a bound,
+      // and `surface` the plane, for every reader that asks what is under a
+      // body. Nothing under it is somewhere to be.
+      const { cx, cz, hx, hz, rot, low, rise } = ramp;
+      world.addRotatedBox(cx, cz, hx, hz, rot, low + 2 * hz * rise);
+      const b = world.boxes[world.boxes.length - 1];
+      b.heap = b.slab = b.ramp = true;
+      b.surface = (lx, lz, r) => low + (Math.min(hz, Math.max(-hz, lz + r)) + hz) * rise;
+      if (!world.solids.includes(m)) world.solids.push(m);
+      continue;
+    }
+    const geo = m.geometry.index ? reserve(() => m.geometry.toNonIndexed()) : m.geometry;
     const p = geo.attributes.position;
     const v = new THREE.Vector3();
     const pts = [];
@@ -724,9 +754,9 @@ function registerHeaps(world, heaps) {
     for (let t = 1; t <= tiers; t++) {
       // Where the surface crosses the middle of this tier, and again just
       // under its top. A mound narrows as it rises, so the upper cut adds
-      // nothing to it; a fallen slab leans, and its upper cut is where the
-      // overhang is — the middle alone left 0.6 m of it at head height with
-      // nothing under it.
+      // nothing to it; a heap that leans over keeps its overhang in the
+      // upper cut (it did for the old leaning slabs, 0.6 m of it at head
+      // height with only the middle cut).
       const cut = [];
       for (const at of [t - 0.5, t - 0.05]) {
         const level = base + (at / tiers) * (top - base);
@@ -767,9 +797,6 @@ function registerHeaps(world, heaps) {
       const wx = best.c * mu - best.s * mw, wz = best.s * mu + best.c * mw;
       world.addRotatedBox(wx, wz, hu, hw, -best.rot, base + (t / tiers) * (top - base));
       world.boxes[world.boxes.length - 1].heap = true;     // so the layout check can see past them
-      // and a fallen slab's tiers say so: each rises 0.6 m over the next,
-      // a wall walked round rather than a mound scrambled up
-      if (m.userData.slab) world.boxes[world.boxes.length - 1].slab = true;
     }
     if (!world.solids.includes(m)) world.solids.push(m);
   }
@@ -3221,8 +3248,10 @@ export function buildCity(scene, painted = null) {
     if (i >= 0) world.solids.splice(i, 1);
     // it pays the bake the UUID it no longer costs there, as a heap cleared
     // from a doorway does: which heaps a perch clears depends on each
-    // heap's shape, and a shape is a look, which must not move a spawn
+    // heap's shape, and a shape is a look, which must not move a spawn —
+    // and for the same reason it pays for being cut, which it no longer is
     spend(UUID_COST);
+    heapBill(m);
   }
   // And a shop's doorway, from the pavement to just inside: a heap there is
   // one a body climbs, now that rubble takes your weight, and from its top
@@ -3243,6 +3272,7 @@ export function buildCity(scene, painted = null) {
     const i = world.solids.indexOf(m);
     if (i >= 0) world.solids.splice(i, 1);
     spend(UUID_COST);
+    heapBill(m);
   }
 
   // The same for a fire escape, which is decoration — built on the facade
@@ -3640,15 +3670,31 @@ export function buildCity(scene, painted = null) {
     for (let k = 0; k < 14; k++) {
       rubblePile(g, cx + randRange(-9, 9), cz + randRange(-9, 9), conc, randRange(0.7, 1.9));
     }
-    // leaning slabs of collapsed floor
+    // Slabs of collapsed floor, each fallen with one edge on the lot and
+    // leaning up from it: a ramp of its own plane, which you walk up. They
+    // used to lean on two axes at once, up to 52 degrees, hanging in the air
+    // at both ends, and their colliders were tiers 0.6 m apart — a wall. The
+    // rolls are the ones they always drew, in the same order, so the stream
+    // is where it was: the pitch comes off the old tilt (13-31 degrees, the
+    // way up whichever side it leant), the turn and the place are the same,
+    // and the height and the cant are drawn and no longer used.
     for (let k = 0; k < 3; k++) {
       const sw = randRange(3, 7), sh = randRange(2.5, 5);
       const m = new THREE.Mesh(boxGeo(sw, 0.4, sh, TILE.concrete), conc);
-      m.position.set(cx + randRange(-7, 7), randRange(0.8, 2), cz + randRange(-7, 7));
-      m.rotation.set(randRange(-0.9, 0.9), Math.random() * Math.PI, randRange(-0.9, 0.9));
+      const px = cx + randRange(-7, 7), py = randRange(0.8, 2), pz = cz + randRange(-7, 7);
+      const tilt = randRange(-0.9, 0.9), turn = Math.random() * Math.PI, cant = randRange(-0.9, 0.9);
+      void py; void cant;
+      const pitch = 0.22 + 0.33 * Math.min(1, Math.abs(tilt) / 0.9);
+      const rot = turn + (tilt < 0 ? Math.PI : 0);
+      // up along the slab's own +z, turned `rot` about Y the way a turned box is
+      m.rotation.set(-pitch, rot, 0, 'YXZ');
+      // the top face's low edge lies on the lot's floor
+      const low = 0.35, run = (sh / 2) * Math.cos(pitch), rise = Math.tan(pitch);
+      const lift = new THREE.Vector3(0, 0.2, 0).applyEuler(m.rotation);
+      m.position.set(px - lift.x, low + run * rise - lift.y, pz - lift.z);
       m.castShadow = m.receiveShadow = true;
       m.userData.tint = tintAt(m.position.x, m.position.z, 7, 0.12);
-      m.userData.slab = true;
+      m.userData.ramp = { cx: px, cz: pz, hx: sw / 2, hz: run, rot, low, rise };
       g.add(m);
       w.solids.push(m);
       heaps.push(m);
