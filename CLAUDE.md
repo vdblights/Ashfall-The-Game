@@ -2107,6 +2107,19 @@ failure, and a failure that leaves the page healthy still stands. Confirmed
 with a simulated wedge — the check's first run failing and the reload after
 it throwing — which relaunched, reran and passed.
 
+**No evaluate holds the page for minutes either.** `a juggernaut stoops up
+a stairwell after you` walked all seventeen stairwells of the larger seed 1
+in one `page.evaluate`, 95-125 s of script with no return to the runner,
+longer than any other check. On CI the reload after it timed out on nine
+runs out of nine after the larger sector landed, and on eight of them the
+hosted runner was shut down while it waited ("received a shutdown signal"),
+taking every later check in the shard with it. That line reads as an outage
+and was twice taken for one; it was this check every time, in whichever
+shard it was dealt to. It never failed here, alone or in its shard, so what
+the runner died of was not seen. The check now returns to the runner
+between stairwells, one evaluate each, a few seconds apiece. A check that
+loops over every stair, room or floor of a seed returns between them.
+
 An eighth, from the perch pass, and it is the expensive kind again: a
 tolerance is a place for a bug to live. `stairs carry the player onto a
 perch` passed a perch once the feet came within 0.7 m of the deck, which the
