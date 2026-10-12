@@ -891,13 +891,36 @@ These each cost real debugging time. Changing them needs a reason.
   foot when it read the box's top). **`blocked`** reads it as tall only
   where it is, so steering does not turn aside at a slab's foot (0 of 5
   feet open without). The route field still bakes it as a wall, because a
-  holdout has no avoidance to be turned by. `a fallen slab is a ramp` walks
-  up every slab whose run nothing else crosses (three to a 28 m lot, they
-  cross each other and the lot's container often: 14 of 34 on seed 1), and
+  holdout has no avoidance to be turned by. **A slab's run is its own**
+  (`layFallen`): three slabs and a container dropped within 7 m of the
+  middle of a 22 m lot crossed one another's runs, 19 of 34 on seed 1 by
+  footprint, and a ramp ended in a wall part way up. The slabs' rolls are
+  drawn where they always were, the container settles exactly as it did,
+  and only then is each slab laid: the nearest pose to its roll, at its
+  turn, 22.5 or 45 degrees either side of it or a right angle off it,
+  leaning either way, whose run and the 1.6 m of lot in front of its foot are
+  inside the lot and 0.6 m clear of the container and the slabs laid
+  before it (0.3 m anywhere in the lot, if nothing near fits — one slab on
+  seed 7). A heap is a cost of 2.5 m of distance, not a wall, because
+  there are fourteen to a lot, and one still lying across a run or a foot
+  is cleared with the rubble a perch clears, paying what it would have
+  cost: 481 → 475 heap colliders on seed 1. No collider placed before the
+  heaps moves, nor the mark, because the slabs are not colliders until
+  they are registered, last. `a fallen slab is a ramp` asks it of every
+  slab (36 on seed 1, 19 of 34 crossed with `main`'s poses), walks up
+  every one, and
   reads the drawn plane against the footing (0.6 mm), a frame's step on
   the way up (4.9 cm), walks into the high side, a sight line over the
   foot and under the plane, a shot and a grenade; a cant put back on the
-  pose fails it at 2.09 m. **What cutting a heap costs is a bill, paid
+  pose fails it at 2.09 m. Three of its setups had only ever met slabs
+  with no heap beside them, and with 24 bare slabs where there were 5 they
+  met one: a walk started on a heap's lowest tier, a walk into the side
+  crossed one, and a heap beside a slab read as the slab holding a body
+  up. Each asks for bare lot now (a ground query under a 3 m ceiling,
+  because a 0.6 m one does not see a 0.73 m tier), and the sight line is
+  only drawn where it is clear off both sides of the slab — which uses the
+  reader under test, so with `lineOfSight` broken it fails on the count
+  sighted (1 of at least 8) rather than on the line. **What cutting a heap costs is a bill, paid
   whether it is cut or cleared** (`heapBill`). Cutting reads a copy of the
   heap's geometry without its index, and that copy is a geometry, a UUID:
   only the heaps that reached the cutting paid it, so which heaps a perch
@@ -2394,6 +2417,20 @@ What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
 
+The pass after the ramps took the item it left on the list: a rubble
+lot's slabs are laid clear of each other and of the lot's container
+(`layFallen`, in the rubble invariant). The useful thing it shows is how
+much freedom a layout has *after* its rolls: the rolls are values, and as
+long as they are drawn in order and nothing placed later reads where the
+slabs went, the slabs can go anywhere in the lot. Here nothing does,
+because they are colliders only once the heaps are registered, last, so
+it is a layout change with no layout cost: `placed`, `fpPlaced`, the
+perches and the mark identical on all three pinned seeds, and only heap
+colliders in the prints. Rendered from 15 m over four of seed 1's lots
+against `main`: two slabs lying through each other in one and a slab
+under the container in another, both gone. Nothing drawn changed in
+count, so no frame was measured.
+
 The pass after the fittings took the last buildable item off the list:
 the fallen slabs in a rubble lot are ramps (invariant above). It found two
 things on the way that were older than it. The boot mark depended on which
@@ -3707,16 +3744,6 @@ Suggested next work, in the order I would do it:
    scrip) are first guesses against about 1,500 points a wave early on.
    Whether a run can afford the plate carrier before wave 4, and whether
    anyone buys optics, is a play question.
-3. **Lay a rubble lot's slabs clear of each other.** Three slabs and a
-   container are dropped within 7 m of a 28 m lot's middle, and on seed 1
-   20 of 34 slabs have another slab or the container across their run (by
-   their bounding boxes, which errs toward crossing), so
-   the ramp ends in a wall part way up. The rolls cannot move, but which
-   way a slab leans and where along its turn it lies are free (a hash, as
-   the pitch is off the old tilt); a slab could try its other side, and
-   the container could be settled against the slabs if they were in the
-   box list when it goes down — which would move the layout, and want the
-   layout check re-measured with the reason.
 
 One piece of housekeeping that cannot be done from here: the merged branch
 `claude/project-memory` still exists on the remote. Deleting it returns 403

@@ -3235,13 +3235,15 @@ export function buildCity(scene, painted = null) {
   // anywhere, with a fallen slab lying across its stairs. The perch stays
   // where it was placed and the rubble on its deck and its run is cleared
   // away, the way whoever built it would have. The heaps were already built,
-  // so taking them out costs the stream nothing.
+  // so taking them out costs the stream nothing. So is a heap a fallen slab
+  // lies across (`crushed`, by `layFallen`): it would stand up through the
+  // ramp.
   for (let k = heaps.length - 1; k >= 0; k--) {
     const m = heaps[k];
     m.updateMatrixWorld(true);
     if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
     const b = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
-    if (!sites.some(([x0, z0, x1, z1]) => b.max.x > x0 && b.min.x < x1 && b.max.z > z0 && b.min.z < z1)) continue;
+    if (!m.userData.crushed && !sites.some(([x0, z0, x1, z1]) => b.max.x > x0 && b.min.x < x1 && b.max.z > z0 && b.min.z < z1)) continue;
     m.removeFromParent();
     heaps.splice(k, 1);
     const i = world.solids.indexOf(m);
@@ -3667,39 +3669,108 @@ export function buildCity(scene, painted = null) {
     slab.userData.tint = tintAt(cx, cz, 6, 0.07);
     g.add(slab);
     floors.push(slab);
+    const h0 = heaps.length;
     for (let k = 0; k < 14; k++) {
       rubblePile(g, cx + randRange(-9, 9), cz + randRange(-9, 9), conc, randRange(0.7, 1.9));
     }
+    const piles = heaps.slice(h0);
     // Slabs of collapsed floor, each fallen with one edge on the lot and
     // leaning up from it: a ramp of its own plane, which you walk up. They
     // used to lean on two axes at once, up to 52 degrees, hanging in the air
     // at both ends, and their colliders were tiers 0.6 m apart — a wall. The
     // rolls are the ones they always drew, in the same order, so the stream
-    // is where it was: the pitch comes off the old tilt (13-31 degrees, the
-    // way up whichever side it leant), the turn and the place are the same,
-    // and the height and the cant are drawn and no longer used.
+    // is where it was: the pitch comes off the old tilt (13-31 degrees), and
+    // the height and the cant are drawn and no longer used. Where each lies
+    // is decided once the lot's container is down (`layFallen`), because
+    // three slabs and a container dropped within 7 m of the middle of the
+    // lot crossed one another's runs, and a ramp ended in a wall part way up.
+    const fallen = [];
     for (let k = 0; k < 3; k++) {
       const sw = randRange(3, 7), sh = randRange(2.5, 5);
       const m = new THREE.Mesh(boxGeo(sw, 0.4, sh, TILE.concrete), conc);
       const px = cx + randRange(-7, 7), py = randRange(0.8, 2), pz = cz + randRange(-7, 7);
       const tilt = randRange(-0.9, 0.9), turn = Math.random() * Math.PI, cant = randRange(-0.9, 0.9);
       void py; void cant;
-      const pitch = 0.22 + 0.33 * Math.min(1, Math.abs(tilt) / 0.9);
-      const rot = turn + (tilt < 0 ? Math.PI : 0);
+      fallen.push({ m, sw, sh, px, pz, tilt, turn });
+    }
+    if (Math.random() < 0.6) settle(g, w, 4, () => container(g, w, cx + randRange(-7, 7), cz + randRange(-7, 7), Math.random() * Math.PI));
+    layFallen(g, w, cx, cz, fallen, piles);
+  }
+
+  /**
+   * Lay a rubble lot's fallen slabs where each one's run is its own. A slab
+   * is tried near where it was rolled, at its rolled turn, 22.5 and 45
+   * degrees either side of it and a right angle off it, leaning either way,
+   * and takes the nearest pose whose run, and the 1.6 m of lot in front of
+   * its foot that you walk onto it from, stand inside the lot and clear of
+   * everything standing in it — the container, the slabs laid before it
+   * and their feet; in a lot too crowded for that, anywhere in the lot with
+   * half the gap. A heap of rubble is a cost rather than a wall, because
+   * there are fourteen to a lot; one the slab still lies across, or that
+   * stands in front of its foot, is crushed (`crushed`) and cleared with
+   * the rubble a perch clears. Nothing here draws on the stream: the rolls
+   * were drawn already and the slabs are not colliders until the heaps are
+   * registered, last, so nothing placed after them saw where they lie. A
+   * slab with no clear pose lies as it was rolled.
+   */
+  function layFallen(g, w, cx, cz, fallen, piles) {
+    const half = LOT / 2 - 0.4, GAP = 0.6, FOOT = 1.6, REACH = 7, HEAP = 2.5;
+    const near = w.boxes.filter((b) => !b.floor && b.top > STEP_UP
+      && b.maxX > cx - half - 1 && b.minX < cx + half + 1 && b.maxZ > cz - half - 1 && b.minZ < cz + half + 1);
+    const TURNS = [[0, 0], [Math.PI / 4, 1], [-Math.PI / 4, 1], [Math.PI / 2, 1], [Math.PI / 8, 0.5], [-Math.PI / 8, 0.5]];
+    const inside = (f) => footCorners(f, 0, 0).every(([x, z]) => Math.abs(x - cx) <= half && Math.abs(z - cz) <= half);
+    // how many heaps a footprint lies across: a heap's middle within its
+    // reach of the rectangle
+    const across = (f) => piles.filter((m) => {
+      const rx = m.position.x - f.cx, rz = m.position.z - f.cz;
+      const lx = Math.abs(f.cos * rx - f.sin * rz) - f.hx, lz = Math.abs(f.sin * rx + f.cos * rz) - f.hz;
+      return Math.hypot(Math.max(0, lx), Math.max(0, lz)) < m.userData.reach;
+    });
+    const laid = [];
+    for (const s of fallen) {
+      const pitch = 0.22 + 0.33 * Math.min(1, Math.abs(s.tilt) / 0.9);
+      const run = (s.sh / 2) * Math.cos(pitch), hx = s.sw / 2;
+      const pose = (x, z, rot) => {
+        const cos = Math.cos(rot), sin = Math.sin(rot), back = run + FOOT / 2;
+        return [{ cx: x, cz: z, hx, hz: run, cos, sin }, { cx: x - sin * back, cz: z - cos * back, hx, hz: FOOT / 2, cos, sin }];
+      };
+      let best = { cost: Infinity, x: s.px, z: s.pz, rot: s.turn + (s.tilt < 0 ? Math.PI : 0) };
+      // near its roll first, and then, in a crowded lot, anywhere in it a
+      // body can still pass between
+      for (const [reach, gap] of [[REACH, GAP], [2 * half, GAP / 2]]) {
+        for (const [by, turned] of TURNS) {
+          for (const flip of [0, 0.25]) {
+            const rot = s.turn + by + ((s.tilt < 0) !== (flip > 0) ? Math.PI : 0);
+            for (const [dx, dz] of settleOffsets(reach)) {
+              const d = Math.hypot(dx, dz) + turned + flip;
+              if (d >= best.cost) break;            // the offsets come nearest first
+              const [run_, foot] = pose(s.px + dx, s.pz + dz, rot);
+              if (!inside(run_) || !inside(foot)) continue;
+              if ([run_, foot].some((f) => near.some((b) => footOverlap(f, 0, 0, b, gap))
+                || laid.some((b) => footOverlap(f, 0, 0, b, gap)))) continue;
+              const cost = d + HEAP * (across(run_).length + across(foot).length);
+              if (cost < best.cost) best = { cost, x: s.px + dx, z: s.pz + dz, rot };
+            }
+          }
+        }
+        if (best.cost < Infinity) break;
+      }
+      const { m } = s, { x, z, rot } = best;
+      if (best.cost < Infinity) laid.push(...pose(x, z, rot));
       // up along the slab's own +z, turned `rot` about Y the way a turned box is
       m.rotation.set(-pitch, rot, 0, 'YXZ');
       // the top face's low edge lies on the lot's floor
-      const low = 0.35, run = (sh / 2) * Math.cos(pitch), rise = Math.tan(pitch);
+      const low = 0.35, rise = Math.tan(pitch);
       const lift = new THREE.Vector3(0, 0.2, 0).applyEuler(m.rotation);
-      m.position.set(px - lift.x, low + run * rise - lift.y, pz - lift.z);
+      m.position.set(x - lift.x, low + run * rise - lift.y, z - lift.z);
       m.castShadow = m.receiveShadow = true;
       m.userData.tint = tintAt(m.position.x, m.position.z, 7, 0.12);
-      m.userData.ramp = { cx: px, cz: pz, hx: sw / 2, hz: run, rot, low, rise };
+      m.userData.ramp = { cx: x, cz: z, hx, hz: run, rot, low, rise };
+      for (const f of pose(x, z, rot)) for (const p of across(f)) p.userData.crushed = true;
       g.add(m);
       w.solids.push(m);
       heaps.push(m);
     }
-    if (Math.random() < 0.6) settle(g, w, 4, () => container(g, w, cx + randRange(-7, 7), cz + randRange(-7, 7), Math.random() * Math.PI));
   }
 
   function buildPlaza(g, w, cx, cz, conc, metal) {
@@ -5530,6 +5601,7 @@ export function buildCity(scene, painted = null) {
     spend(UUID_COST);
     const geo = reserve(() => rubbleGeo(r, heaps.length + 1));
     const m = new THREE.Mesh(geo, debrisMat);
+    m.userData.reach = r * 0.7;                   // how far it spreads at the foot, for a slab laid by it
     m.userData.tint = tintAt(x, z, 10, 0.2);
     m.position.set(x, randRange(0.05, 0.3) * scale, z);
     // A heap slumps: squashed along the vertical and only tipped a little,
