@@ -1,0 +1,30 @@
+# What Dependabot keeps current, once a week and grouped, so it is one pull
+# request an ecosystem rather than one a package.
+#
+# Nothing here is shipped to a player: the npm packages only run the suite and
+# the one-file build, and three.js is a file vendored in `vendor/`, which
+# Dependabot cannot see and which is updated by hand. A Playwright bump brings
+# a new Chromium, which the suite draws through under software rendering, so
+# CI on its pull request is the thing to read before merging.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tools:
+        patterns: ['*']
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
