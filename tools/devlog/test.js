@@ -44,7 +44,7 @@ await check('a link counts 23 characters and an emoji two, as X counts them', ()
 });
 
 await check('the template fits a post, however long the title', () => {
-  const link = 'https://github.com/vdblights/Cyrus-game';
+  const link = 'https://github.com/vdblights/Ashfall-The-Game';
   const short = templatePost({ title: 'Doors open and close.' }, link);
   assert.equal(short, `ASHFALL dev log: Doors open and close.\n\n${link} #gamedev #indiedev`);
   const long = templatePost({ title: 'word '.repeat(100) }, link);
@@ -79,7 +79,7 @@ const dir = await mkdtemp(join(tmpdir(), 'devlog-'));
 let events = 0;
 
 const BASE = {
-  GITHUB_REPOSITORY: 'vdblights/Cyrus-game', GITHUB_TOKEN: 'gh', DEVLOG_LINK: 'https://example.com/play',
+  GITHUB_REPOSITORY: 'vdblights/Ashfall-The-Game', GITHUB_TOKEN: 'gh', DEVLOG_LINK: 'https://example.com/play',
   ANTHROPIC_API_KEY: '', ANTHROPIC_BASE_URL: '', DEVLOG_AUTOPOST: '', DEVLOG_HANDLE: '',
   X_API_KEY: '', X_API_SECRET: '', X_ACCESS_TOKEN: '', X_ACCESS_TOKEN_SECRET: '',
   INPUT_NUMBER: '', INPUT_POST: '', INPUT_TEXT: '', INPUT_TOPIC: '', GITHUB_RUN_NUMBER: '',
@@ -225,7 +225,7 @@ await check('a scheduled post is drafted in its voice as a devlog issue', async 
   const { sent, error } = await drive(schedule.main, { ANTHROPIC_API_KEY: 'a', ANTHROPIC_BASE_URL: 'https://claude.test', INPUT_TOPIC: 'tip' }, [
     ['GET', /issues\?labels=devlog/, [{ title: 'old', body: DRAFT }]],
     CLAUDE('WREN, HALCYON. Hold G to cook it. Not too long.'),
-    ['POST', /repos\/vdblights\/Cyrus-game\/issues$/, { number: 80 }],
+    ['POST', /repos\/vdblights\/Ashfall-The-Game\/issues$/, { number: 80 }],
     ['PATCH', /issues\/80$/, {}],
   ]);
   assert.equal(error, null);

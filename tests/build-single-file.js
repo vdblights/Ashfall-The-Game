@@ -36,7 +36,10 @@ const body = html
   .slice(html.indexOf('<body>') + 6, html.indexOf('<script type="module"'))
   .trim();
 const title = (html.match(/<title>([^<]*)<\/title>/) || [, 'ASHFALL'])[1];
-const favicon = (html.match(/<link rel="icon"[^>]*>/) || [''])[0];
+// the inline SVG icon only: the PNG icons and the manifest are files beside
+// the page, which a one-file build has none of
+const favicon = (html.match(/<link rel="icon" type="image\/svg\+xml"[^>]*>/) || [''])[0];
+const meta = (html.match(/<meta (name="(description|theme-color|twitter:[a-z]+)"|property="og:[a-z]+")[^>]*>/g) || []).join('\n');
 
 const page = `<!DOCTYPE html>
 <html lang="en">
@@ -44,6 +47,7 @@ const page = `<!DOCTYPE html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
 ${favicon}
+${meta}
 <title>${title}</title>
 <style>
 ${css}

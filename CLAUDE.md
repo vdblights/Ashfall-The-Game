@@ -90,6 +90,7 @@ builds, never to play.
 | `src/nav.js` | Walkable grid over `world.boxes`, and a route field to the player |
 | `src/rng.js` | Seeded `Math.random` for the page's lifetime, and `reserve`/`spend` |
 | `src/loading.js` | The loading screen: stages, progress, field notes, the sector survey |
+| `assets/branding/` | The logo, icons and X art, and the code that draws them; nothing in the game loads them but the tab and home-screen icons |
 | `src/perf.js` | The frame-rate readout (`` ` ``), and the name of the GPU the browser draws with |
 
 The whole game hangs off `window.__game`, which is how tests and probes drive it.

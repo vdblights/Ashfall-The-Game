@@ -1,12 +1,18 @@
-# ASHFALL
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/ashfall-logo.png" />
+    <img src="assets/branding/ashfall-logo-dark.png" alt="ASHFALL" width="600" />
+  </picture>
+</h1>
 
-[![CI](https://github.com/vdblights/Cyrus-game/actions/workflows/ci.yml/badge.svg)](https://github.com/vdblights/Cyrus-game/actions/workflows/ci.yml)
+[![CI](https://github.com/vdblights/Ashfall-The-Game/actions/workflows/ci.yml/badge.svg)](https://github.com/vdblights/Ashfall-The-Game/actions/workflows/ci.yml)
 
 A small browser first-person shooter set in an abandoned city at dusk.
 Operation ASHFALL: twelve waves in the ruins of Carrow, then as long as you
 can last.
 
 No build step, no asset files, no network calls — open the page and play.
+(The only files the page links are its tab and home-screen icons.)
 
 ## Running it
 
@@ -29,6 +35,16 @@ draws a survey of the sector as it goes: the street grid first, then the
 buildings and the rooftops a marksman can take once the city is laid out,
 and where you go in. The survey stays beside DEPLOY afterwards, so you can
 see the sector before you drop into it.
+
+### Branding
+
+The logo, the icons and the X avatar and banner (@AshfallTheGame) are in
+`assets/branding/`, each as an SVG and a PNG. `source/gen.mjs` draws every
+SVG from code and the Rajdhani font beside it; `source/render.cjs` and
+`source/render-icons.cjs` render the PNGs with Playwright. `favicon.svg` is
+the avatar cropped to its ring with heavier strokes, so it still reads at 16
+px, and the same SVG is inlined in `index.html` so the one-file build keeps
+its tab icon.
 
 ### One-file build
 
