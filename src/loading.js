@@ -31,6 +31,10 @@ const NOTES = [
   'Headshots hurt a great deal more than body shots, at every range.',
   'The fallen drop ammo, health and frags. They do not drop them for long.',
   'Hostiles route around buildings to reach you. A corner buys you seconds, not safety.',
+  'A burning drum goes up after a couple of rounds, and a frag beside one sets it off. Stand back from both.',
+  'Crouch out of a sprint to slide in low. Jump out of the slide and you keep the speed.',
+  'Hold Q or E to lean round a corner. Your head is out, and so is the target they shoot at.',
+  'Glass stops nothing, but it breaks loudly. A window that shatters on its own has a marksman behind it.',
 ];
 const NOTE_SECONDS = 6;
 

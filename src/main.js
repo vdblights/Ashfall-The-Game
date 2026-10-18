@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN } from './city.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
-import { Player, Input } from './player.js';
+import { Player, Input, LEAN } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
 import { GrenadeSystem, FUSE, BLAST_RADIUS, BLAST_DAMAGE } from './grenades.js';
 import { Effects } from './effects.js';
@@ -18,6 +18,8 @@ import { randRange, SUPPORT_RADIUS } from './world.js';
 import { NavGrid } from './nav.js';
 import { ArmouryScreen, EFFECT, freshKit } from './armoury.js';
 import { PerfMeter } from './perf.js';
+import { Barrels, BARREL } from './barrels.js';
+import { Glass } from './glass.js';
 import { installAtmosphere, skyMaterial, environmentFrom, SUN_DIR, SUN_COLOR } from './atmosphere.js';
 import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE } from './shadows.js';
 import { initRandom, getSeed, reserve, spend } from './rng.js';
@@ -213,6 +215,8 @@ class Game {
         this.world = city.world;
         this.city = city.group;          // the merged, baked meshes checks read
         this.fireBarrels = city.fireBarrels;
+        // and what blows them up: no three object, no draw (barrels.js)
+        this.barrels = new Barrels(city.fireBarrels, this);
         this.perches = city.perches;
         this.batches = city.batches;
         this.weedMeshes = city.group.children.filter((o) => o.isMesh && o.material.userData.name === 'weeds');
@@ -241,6 +245,8 @@ class Game {
         this.effects = reserve(() => new Effects(this.scene));
         this.effects.groundAt = (x, z, y) => this.world.groundHeight(x, z, SUPPORT_RADIUS, y);
         this.player = new Player(this.camera, this.world);
+        // the panes still in the windows, and the shards of the ones that go
+        this.glass = reserve(() => new Glass(this.scene, this));
       }],
       ['Arming you', 18, () => {
         this.weapons = reserve(() => new WeaponSystem(this.viewScene, this));
@@ -899,9 +905,7 @@ class Game {
       if (code === 'Digit2') this.weapons.select(1, this.time);
       if (code === 'Digit3') this.weapons.select(2, this.time);
       if (code === 'Digit4') this.weapons.select(3, this.time);
-      if (code === 'KeyQ') this.weapons.cycle(1, this.time);
       if (code === 'KeyB') this.openArmoury();
-      if (code === 'KeyE') this.useDoor();
       if (code === 'KeyF' || code === 'KeyV') this.weapons.startMelee(this.time);
       if (code === 'KeyG' && this.cookStart < 0 && this.nades > 0 && !this.player.dead) {
         this.cookStart = this.time;          // pin is out; the fuse is running
@@ -917,6 +921,13 @@ class Game {
 
     this.input.onKeyUp = (code) => {
       if (code === 'KeyG' && this.cookStart >= 0) this.throwGrenade();
+      // Q and E lean while held, so what they always did happens on a tap,
+      // as the key comes up: a key held long enough to lean did not tap
+      if ((code === 'KeyQ' || code === 'KeyE') && this.state === 'playing'
+          && (this.player.leanHeld[code] || 0) < LEAN.hold) {
+        if (code === 'KeyQ') this.weapons.cycle(1, this.time);
+        else this.useDoor();
+      }
     };
   }
 
@@ -959,6 +970,8 @@ class Game {
     this.pickups.length = 0;
     this.effects.reset();
     this.grenades.reset();
+    this.barrels.reset();
+    this.glass.reset();
     this.objectives.reset();
     this.kit = freshKit();          // what the armoury has fitted this run
     this.scrip = 0;                 // what there is to spend there
@@ -972,6 +985,7 @@ class Game {
     this.player.reset(INSERTION.x, INSERTION.z);
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
+    this.player.onSlide = () => { audio.slide(); this.player.addShake(0.05); };
     this.player.onFallDamage = (amount) => {
       this.player.addShake(0.4);
       this.damagePlayer(amount, null);
@@ -1616,11 +1630,20 @@ class Game {
 
     const hitsE = RAY.intersectObjects(enemyMeshes, false);
     const hitsW = RAY.intersectObjects(this.world.solids, false);
+    // a fire barrel is a raycast target of its own, outside `world.solids`,
+    // because it stands in the scene to be blown up rather than in the bake
+    const hitsB = RAY.intersectObjects(this.barrels.meshes, false);
     const hitE = hitsE[0];
-    const hitW = hitsW[0];
+    let hitW = hitsW[0];
+    if (hitsB[0] && (!hitW || hitsB[0].distance < hitW.distance)) hitW = hitsB[0];
 
     const muzzle = this.weapons.muzzleWorld(V1).clone();
     let end = V2.copy(this.camera.position).addScaledVector(dir, def.range).clone();
+
+    // glass is no stop to a round: every pane it passes before what it does
+    // stop at goes
+    const stop = Math.min(def.range, hitE ? hitE.distance : Infinity, hitW ? hitW.distance : Infinity);
+    this.glass.alongRay(this.camera.position, dir, stop);
 
     if (hitE && (!hitW || hitE.distance < hitW.distance)) {
       const enemy = hitE.object.userData.enemy;
@@ -1640,6 +1663,8 @@ class Game {
       const n = hitW.face ? hitW.face.normal.clone().transformDirection(hitW.object.matrixWorld) : dir.clone().negate();
       this.effects.impact(end, n);
       audio.impact(end);
+      const barrel = hitW.object.userData.barrel;
+      if (barrel) this.barrels.hit(barrel, def.damage * EFFECT.rifling[this.kit.rifling]);
     } else {
       this.effects.impact(end, dir.clone().negate(), 'soft');
     }
@@ -1723,6 +1748,11 @@ class Game {
   explode(pos, owner = 'player') {
     this.effects.explosion(pos);
     audio.explosion(1, pos);
+    // A fire barrel's blast reaches further than a frag's, and hurts every
+    // side: whether anybody is credited is whether the player set it off
+    // ('barrel') or a hostile's frag did ('barrel-hostile').
+    const R = owner === 'barrel' || owner === 'barrel-hostile' ? BLAST_RADIUS * BARREL.reach : BLAST_RADIUS;
+    const label = { player: 'FRAG', charge: 'CHARGE', barrel: 'BARREL' }[owner];
 
     // Blast is traced from a little above the casing: a grenade resting
     // against a sandbag still throws fragments over it. Cover behind which a
@@ -1736,28 +1766,32 @@ class Game {
       const friendly = !!e.type.friendly;
       if (owner === 'hostile' && !friendly) continue;
       const dist = Math.hypot(e.pos.x - pos.x, e.pos.z - pos.z, (e.pos.y + 1) - pos.y);   // aim at the chest
-      if (dist > BLAST_RADIUS) continue;
+      if (dist > R) continue;
 
       const exposed = this.world.lineOfSight(pos.x, originY, pos.z, e.pos.x, e.pos.y + 1.15, e.pos.z);
-      const falloff = Math.pow(THREE.MathUtils.clamp(1 - dist / BLAST_RADIUS, 0, 1), 1.6);
+      const falloff = Math.pow(THREE.MathUtils.clamp(1 - dist / R, 0, 1), 1.6);
       V1.set(e.pos.x - pos.x, 0, e.pos.z - pos.z).normalize();
       const result = e.damage(BLAST_DAMAGE * falloff * (exposed ? 1 : 0.4),
         'body', V1, V2.copy(e.pos).setY(e.pos.y + 1.2));
       e.pos.addScaledVector(V1, falloff * 1.4);
-      if (!friendly) this.registerHit(e, result, owner === 'charge' ? 'CHARGE' : 'FRAG', false);
+      if (!friendly && label) this.registerHit(e, result, label, false);
     }
 
     // the player is not exempt from their own grenade
     const pd = this.player.position.distanceTo(pos);
-    if (pd < BLAST_RADIUS) {
+    if (pd < R) {
       const exposed = this.world.lineOfSight(pos.x, originY, pos.z,
         this.player.position.x, this.player.position.y, this.player.position.z);
-      const falloff = Math.pow(THREE.MathUtils.clamp(1 - pd / BLAST_RADIUS, 0, 1), 1.6);
+      const falloff = Math.pow(THREE.MathUtils.clamp(1 - pd / R, 0, 1), 1.6);
       this.player.addShake(0.35 + falloff * 0.65);
       this.damagePlayer(BLAST_DAMAGE * 0.55 * falloff * (exposed ? 1 : 0.4), pos);
-    } else if (pd < BLAST_RADIUS * 2.5) {
-      this.player.addShake(0.25 * (1 - pd / (BLAST_RADIUS * 2.5)));
+    } else if (pd < R * 2.5) {
+      this.player.addShake(0.25 * (1 - pd / (R * 2.5)));
     }
+
+    // and what else it reaches goes too: a lit drum after it, and the glass
+    this.barrels.blast(pos, R, owner);
+    this.glass.blast(pos, R * 1.4);
   }
 
   maybeDrop(pos) {
@@ -2070,6 +2104,14 @@ class Game {
     if (this.cookStart >= 0 && this.time - this.cookStart >= FUSE) this.throwGrenade();
 
     this.grenades.update(dt, this.world);
+    this.barrels.update(dt);
+    // a body pushing through a window takes its pane with it
+    const pl = this.player;
+    if (!pl.dead) this.glass.touch(pl.position.x, pl.feetY, pl.position.z, pl.radius, 1.85, pl.velocity.x, pl.velocity.z);
+    for (const e of this.enemies) {
+      if (e.alive) this.glass.touch(e.pos.x, e.pos.y, e.pos.z, e.radius, 1.8 * e.type.scale, e.vel?.x || 0, e.vel?.z || 0);
+    }
+    this.glass.update(dt);
     this.objectives.update(dt);
     this.updateWaves(dt);
     this.updatePickups(dt);
@@ -2129,9 +2171,10 @@ class Game {
     if (!force && now - (this.firesPlacedAt ?? -1) < 0.25) return;
     this.firesPlacedAt = now;
     const p = this.player.position;
-    const near = [...fires].sort((a, b) =>
-      Math.hypot(a.light.position.x - p.x, a.light.position.z - p.z)
-      - Math.hypot(b.light.position.x - p.x, b.light.position.z - p.z));
+    // a drum that has gone up still holds a light at nothing rather than
+    // giving it back, so the count never moves: it is only last in line
+    const far = (b) => Math.hypot(b.light.position.x - p.x, b.light.position.z - p.z) + (b.burst ? 1e6 : 0);
+    const near = [...fires].sort((a, b) => far(a) - far(b));
     near.forEach((b, i) => { b.light.visible = i < this.fireLights; });
   }
 
@@ -2177,9 +2220,12 @@ class Game {
       // seeded stream and make an otherwise identical run diverge
       const f = 0.7 + Math.sin(b.phase) * 0.15 + Math.sin(b.phase * 2.7) * 0.12
         + Math.sin(b.phase * 6.1 + 1.7) * 0.06;
-      b.light.intensity = b.base * f;
-      b.flame.material.opacity = 0.65 + f * 0.3;
-      b.flame.scale.set(1.0 + f * 0.25, 1.4 + f * 0.4, 1);
+      if (b.burst) { b.light.intensity = 0; continue; }
+      // a holed drum on its fuse roars up before it goes
+      const roar = b.fuse >= 0 ? 1.9 : 1;
+      b.light.intensity = b.base * f * roar;
+      b.flame.material.opacity = Math.min(1, 0.65 + f * 0.3 * roar);
+      b.flame.scale.set((1.0 + f * 0.25) * roar, (1.4 + f * 0.4) * roar, 1);
     }
   }
 

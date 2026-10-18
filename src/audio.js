@@ -280,6 +280,38 @@ class Audio {
     this._noise(0.9, 'highpass', 2200, 0.8, 0.14 * gain, 900, out);      // debris hiss
   }
 
+  /** A slide: grit and cloth dragged over concrete, fading as it slows. */
+  slide() {
+    if (!this.ctx) return;
+    this._noise(0.75, 'bandpass', 900, 0.8, 0.16, 300);
+    this._noise(0.5, 'highpass', 2600, 0.7, 0.05, 1200);
+  }
+
+  /** A holed fire barrel venting before it goes: a rising hiss. */
+  hiss(at = null) {
+    if (!this.ctx) return;
+    const out = this._out(at);
+    this._noise(0.5, 'highpass', 2400, 1.2, 0.16, 5200, out);
+    this._tone('sawtooth', 180, 320, 0.45, 0.03, 0, out);
+  }
+
+  /**
+   * A pane going: the crack, the sheet falling apart, and shards ringing as
+   * they land. `n` varies the ring from pane to pane off a count, never
+   * `Math.random`, which is the city's seed.
+   */
+  glass(at = null, gain = 1, n = 0) {
+    if (!this.ctx) return;
+    const out = this._out(at);
+    const v = 1 + (((n * 0.618034) % 1) - 0.5) * 0.3;
+    this._noise(0.05, 'highpass', 3800, 1, 0.34 * gain, undefined, out);           // the crack
+    this._noise(0.42, 'bandpass', 5200 * v, 1.6, 0.20 * gain, 2600, out);          // the sheet
+    for (let i = 0; i < 4; i++) {                                                  // shards ringing
+      const f = (3100 + ((i * 1.31 + n * 0.77) % 1) * 2600) * v;
+      this._tone('sine', f, f * 0.97, 0.12, 0.05 * gain, 0.12 + i * 0.07 + ((n + i) % 3) * 0.03, out);
+    }
+  }
+
   meleeSwing() { if (this.ctx) this._noise(0.16, 'bandpass', 700, 1.4, 0.16, 260); }
 
   meleeHit() {
