@@ -11,7 +11,7 @@ Read `README.md` first for what the game *is*. This file is for changing it.
 ```bash
 npm start                      # serve at http://localhost:8000 (no deps needed)
 npm test                       # the headless suite (needs npm install first)
-npm test -- --shard=2/4        # every fourth check from the second, as CI runs it
+npm test -- --shard=2/6        # the second of six weighted slices, as CI runs it
 npm test -- --only=auto        # just the checks whose name contains "auto"
 npm test -- --only="a|b"       # either, in suite order, in one browser
 npm run build                  # one-file dist/ashfall.html, no external refs
@@ -3561,8 +3561,8 @@ climb was right. `World.mantleTarget` is unchanged.
 
 CI runs the suite and the one-file build on every push to `main` and every PR
 (`.github/workflows/ci.yml`), and attaches the built `ashfall.html` to the run.
-The suite runs as four parallel shards (`--shard=i/4`, dealt round-robin),
-and the build only after all four pass. It was one job with a twenty-minute
+The suite runs as six parallel shards (`--shard=i/6`, dealt by weight), and
+the build only after all of them pass. It was one job with a twenty-minute
 limit until every run from #21 onward was cancelled at exactly twenty
 minutes: every check reboots the game, a boot is most of a check under
 software rendering, and two passes in a row added boot stages that draw
@@ -3571,6 +3571,32 @@ software frames deciding it could not measure one). **Anything added to
 boot is paid once per check**, and the suite prints each check's seconds so
 the bill is visible; a boot stage that draws should give up early when the
 frames say software.
+
+**What a check costs is mostly boots, so the runner spends fewer of them.**
+Measured on CI before the suite was reworked: four shards of 16.6, 24.3,
+18.2 and 20.4 minutes, nearly every check 33-37 s, and of that about 33 s
+boot — 13 s of it the warm-up frame at the end of `precompileStages`, one
+software frame with nothing culled, 9 s painting textures, 4 s laying out
+the city. Four things came out of that. The suite skips the warm-up frame
+(`suite` in `precompileStages`) unless the URL carries `?warm`, which a
+check asks for with `warm: true`: `nothing compiles at first contact`,
+because the frame is what it guards, and the layout check, because **the
+warm-up frame spends the seeded stream** — skipped, seed 1's mark after
+boot is 220091255 against the -1299344873 a player's boot leaves, and only
+the warm boot is pinned. A check marked `reads` only reads the booted
+game: they run first in their shard, one boot between them, and the runner
+digests the game before and after each (`digest`: the clock, the stream's
+mark, the tier and resolution, the camera, the player, the scene's and the
+world's counts, the programs) and fails one that changed it. The first
+check no longer reboots the game `openGame` just booted. And shards are
+dealt heaviest first to the lightest shard by `weight`, a check's CI cost
+in boots, 1 unless said: round-robin had put two of the three slow checks
+on one shard, eight minutes past the rest. Re-weight from the times the
+runner prints when a shard finishes well ahead of the others. After it, on
+CI: five shards ran their checks in 8.1-9.6 minutes and one in 4.8, and
+the whole run took ten minutes against twenty-five. The ash check draws at half the high tier's
+resolution, which a share of the frame does not notice (0.229% open, 0.015%
+indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
 minutes rather than the download. If the browser install ever starts failing,
 the harness falls back to `PLAYWRIGHT_BROWSERS_PATH` and `ASHFALL_CHROME`.

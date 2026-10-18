@@ -22,23 +22,33 @@ import { openGame } from './harness.js';
 const SEED = Number((process.argv.find((a) => a.startsWith('--seed=')) || '').split('=')[1]) || 1;
 const SHOTS = process.argv.includes('--shots');
 const HEADED = process.argv.includes('--headed');
-// `--shard=2/4` runs every fourth check starting at the second. Every check
-// boots the game afresh, and a boot is most of a check under software
-// rendering, so the suite outgrew one CI job's time limit; CI runs it as
-// parallel shards. Dealt round-robin, so slow neighbours are spread out.
+// `--shard=2/6` runs the second of six parallel slices of the suite, which is
+// how CI runs it: a boot is most of a check under software rendering, and the
+// suite outgrew one job's time limit long ago. The slices are dealt by weight
+// (see the runner), not round-robin, so no shard draws the three slow checks.
 const SHARD = ((process.argv.find((a) => a.startsWith('--shard=')) || '').split('=')[1] || '')
   .split('/').map(Number);
-const inShard = (i) => SHARD.length !== 2 || i % SHARD[1] === SHARD[0] - 1;
 // a port per shard, so shards can run side by side on one machine too
 const PORT = 8177 + (SHARD.length === 2 ? SHARD[0] : 0);
 const SHOT_DIR = fileURLToPath(new URL('./shots/', import.meta.url));
 
 const checks = [];
-const check = (name, fn) => checks.push({ name, fn });
+/**
+ * `check(name, fn)`, or `check(name, opts, fn)` with any of:
+ *  - `reads`: the check only reads the booted game, so it may take the boot
+ *    the check before it left untouched, and leave its own to the next one.
+ *    The runner holds it to that (see `digest`), and fails it if it did not.
+ *  - `warm`: it needs the boot a player gets, warm-up frame and all.
+ *  - `weight`: what it costs on CI, in boots (about 20 s there); 1 if unsaid.
+ */
+const check = (name, opts, fn) => {
+  if (typeof opts === 'function') [opts, fn] = [{}, opts];
+  checks.push({ name, fn, reads: !!opts.reads, warm: !!opts.warm, weight: opts.weight ?? (opts.reads ? 0.15 : 1) });
+};
 
 /* ------------------------------------------------------------------ checks */
 
-check('boots without errors and builds a city', async (page) => {
+check('boots without errors and builds a city', { reads: true }, async (page) => {
   const boot = await page.evaluate(() => {
     const g = window.__game;
     return {
@@ -57,7 +67,7 @@ check('boots without errors and builds a city', async (page) => {
   return boot;
 });
 
-check('the loading screen moves, and the menu does not jump when it is done', async (page) => {
+check('the loading screen moves, and the menu does not jump when it is done', { reads: true }, async (page) => {
   // Boot used to be the body of the constructor: one task, seventeen seconds
   // under software rendering, during which the page drew nothing at all and
   // the word LOADING sat frozen. It is a list of stages now, with a chance to
@@ -102,7 +112,7 @@ check('the loading screen moves, and the menu does not jump when it is done', as
   return r;
 });
 
-check('every city material survives the bake', async (page) => {
+check('every city material survives the bake', { reads: true }, async (page) => {
   // The bake merges the city by material, and it used to bucket by
   // `material.uuid`. Under `reserve` a UUID is not unique — every reserve
   // that starts from the same place in the seeded stream mints the same
@@ -743,7 +753,7 @@ check('stairs carry the player onto a perch', async (page) => {
   return { tested: r.tested, climbed: r.climbed };
 });
 
-check('a fire escape is open grating near and far, and hangs above every head', async (page) => {
+check('a fire escape is open grating near and far, and hangs above every head', { reads: true }, async (page) => {
   // A fire escape was a slab, a bar and a tilted plank, which read from
   // across a street and fell apart up close. Its landings, treads and
   // railing infill are cut out of textures now, so you see through them —
@@ -797,7 +807,7 @@ check('a fire escape is open grating near and far, and hangs above every head', 
   return r;
 });
 
-check('what stands on a perch holds you up', async (page) => {
+check('what stands on a perch holds you up', { reads: true }, async (page) => {
   // Every terrace may carry a crate and a knee-high lip round its edge, and
   // both used to be drawn and nothing else: the crate was in neither
   // `world.boxes` nor `world.solids`, so you walked into it and fell through
@@ -1085,7 +1095,7 @@ check('a pull-up carries the view, it does not jump it', async (page) => {
  * the code they replaced — see the notes on each.
  */
 
-check('a prop stops you where you can see it, not a metre before', async (page) => {
+check('a prop stops you where you can see it, not a metre before', { reads: true }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const R = g.player.radius;
@@ -2181,7 +2191,7 @@ check('a holdout is cut loose, follows you to the pickup, and is not a target', 
   return r;
 });
 
-check('no shop is left bare', async (page) => {
+check('no shop is left bare', { reads: true }, async (page) => {
   // A 10 m shop with a stairwell in it read as an empty concrete box: the
   // shaft and the floor in front of it take the blank walls the shelving and
   // crates would have gone on. `furnishBare` puts a table, a crate stack and
@@ -2320,7 +2330,7 @@ check('a warlord stoops under a shop ceiling, and stands tall in the street', as
   return r;
 });
 
-check('a scripted run reaches wave 3 without stalling', async (page) => {
+check('a scripted run reaches wave 3 without stalling', { weight: 2.8 }, async (page) => {
   const r = await page.evaluate(() => window.__botRun(240));
   expect(!r.scoreBroke, `score stopped being a number at t=${r.at}s`);
   expect(r.wave >= 3, `only reached wave ${r.wave} in four minutes`);
@@ -2336,7 +2346,7 @@ check('a scripted run reaches wave 3 without stalling', async (page) => {
   return r;
 });
 
-check('a wave never deadlocks on a hostile that cannot path to you', async (page) => {
+check('a wave never deadlocks on a hostile that cannot path to you', { weight: 2.3 }, async (page) => {
   // A hostile steers straight at the player and has no pathfinding, so with a
   // building in the way it slides along the wall face. Every per-window
   // measure the stuck watchdog had excused that — it covers ground, and the
@@ -2505,7 +2515,7 @@ check('a hostile walks around the building between you, not into it', async (pag
   return r;
 });
 
-check('a marksman is moved to a perch that overlooks you', async (page) => {
+check('a marksman is moved to a perch that overlooks you', { weight: 2.2 }, async (page) => {
   // The rooftop half of the same deadlock. A marksman on a perch is exempt
   // from nearly everything that moves a hostile — no drift, no strafe, four
   // times the watchdog leash — all of it there to stop it walking off the
@@ -2553,7 +2563,7 @@ check('a marksman is moved to a perch that overlooks you', async (page) => {
   return r;
 });
 
-check('ambient occlusion darkens where things meet and leaves open ground alone', async (page) => {
+check('ambient occlusion darkens where things meet and leaves open ground alone', { weight: 1.9 }, async (page) => {
   // Occlusion is only right if it does both. The pass is written once and
   // read twice: at the foot of a barrier there should be a pool of shade,
   // and on open pavement there should be nothing at all. The second half is
@@ -2651,7 +2661,7 @@ check('ambient occlusion darkens where things meet and leaves open ground alone'
   return r;
 });
 
-check('the sun reads a sharp shadow map near you, and it agrees with the wide one', async (page) => {
+check('the sun reads a sharp shadow map near you, and it agrees with the wide one', { weight: 2.9 }, async (page) => {
   // The cascade is a rewrite of three's light loop that assumes the sun is
   // the first shadow-casting directional light and the cascade the second.
   // Nothing errors when that stops being true: the sun reads the wrong map,
@@ -2738,7 +2748,7 @@ check('the sun reads a sharp shadow map near you, and it agrees with the wide on
   return r;
 });
 
-check('the sky, the fog and the light are one atmosphere', async (page) => {
+check('the sky, the fog and the light are one atmosphere', { weight: 2 }, async (page) => {
   // One function draws the dome, lights the city through the environment
   // map and colours the fog. If the fog chunk is not compiled in, distance
   // goes back to one flat brown; if the sky loses its bearing, the light on
@@ -2789,7 +2799,7 @@ check('the sky, the fog and the light are one atmosphere', async (page) => {
   return r;
 });
 
-check('a window is a hole in a wall, and only in a wall', async (page) => {
+check('a window is a hole in a wall, and only in a wall', { weight: 3.1 }, async (page) => {
   // The windows are cut into the facade by its fragment shader (`windows.js`):
   // reveals, glass set back, a room behind a broken pane. Two ways for that to
   // go wrong, and both are silent. It can stop doing anything — the patch not
@@ -2896,7 +2906,7 @@ check('a window is a hole in a wall, and only in a wall', async (page) => {
   return r;
 });
 
-check('weathering is ragged, not round', async (page) => {
+check('weathering is ragged, not round', { reads: true }, async (page) => {
   // Every texture's large-scale grime goes through `mottle`, which used to
   // fill ellipses. Upscaled, they came out soft-edged and still round, and a
   // surface of soft round stains is polka dots — the plaza, every barrier,
@@ -3021,7 +3031,7 @@ check('auto starts at the tier this machine can hold', async (page) => {
   return r;
 });
 
-check('a bad pixel stays one pixel, it does not bloom into a box', async (page) => {
+check('a bad pixel stays one pixel, it does not bloom into a box', { weight: 3.2 }, async (page) => {
   // Reported from play as black boxes blinking in a line around the gun when
   // turning. It never reproduced here — no pixel in the chain went NaN or
   // past 1,000 over hundreds of swept frames under software rendering — but
@@ -3080,7 +3090,7 @@ check('a bad pixel stays one pixel, it does not bloom into a box', async (page) 
   return r;
 });
 
-check('every surface is textured at the world scale it declares', async (page) => {
+check('every surface is textured at the world scale it declares', { reads: true }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const rows = [];
@@ -3143,7 +3153,7 @@ check('every surface is textured at the world scale it declares', async (page) =
   return { batches: r.length, worst: r.reduce((a, b) => (Math.abs(b.median - 1) > Math.abs(a.median - 1) ? b : a)) };
 });
 
-check('the gun in your hands is solid, held, and textured at its declared scale', async (page) => {
+check('the gun in your hands is solid, held, and textured at its declared scale', { reads: true }, async (page) => {
   // Three things about the view model, each of which fails silently. A facet
   // wound the wrong way vanishes, and reads as a notch bitten out of a part.
   // A gun with nobody holding it floats — every weapon is held by two gloved
@@ -3214,7 +3224,7 @@ check('the gun in your hands is solid, held, and textured at its declared scale'
   return { ratios: r.ratios, tris: r.tris, inverted: r.inverted, held: r.held };
 });
 
-check('every finger closes on the grip it holds, or on the hand under it', async (page) => {
+check('every finger closes on the grip it holds, or on the hand under it', { reads: true }, async (page) => {
   // The hands are swept now — fingers with knuckles and the fold past each,
   // wider than they are deep — and a finger built a few millimetres off is
   // either buried in the grip or holding air, both of which nothing errors
@@ -3281,7 +3291,7 @@ check('every finger closes on the grip it holds, or on the hand under it', async
   return r;
 });
 
-check('every grip rakes back toward the shooter', async (page) => {
+check('every grip rakes back toward the shooter', { reads: true }, async (page) => {
   // A pistol grip leans back from the trigger: the web of the hand sits under
   // the slide and the heel of it further back, which is what points the
   // muzzle where the forearm points. Every grip in the game was built as a box
@@ -3331,7 +3341,7 @@ check('every grip rakes back toward the shooter', async (page) => {
   return r;
 });
 
-check('a wreck fits the box you collide with, and stands on its wheels', async (page) => {
+check('a wreck fits the box you collide with, and stands on its wheels', { reads: true }, async (page) => {
   // A wreck's collider is 1.9 x 4.4 m and 1.5 m high, and the collider is what
   // you stand on when you climb onto one. The lofted wreck stood 1.82 m tall
   // over it, so a player on the roof had their boots 30 cm inside the steel,
@@ -3374,7 +3384,7 @@ check('a wreck fits the box you collide with, and stands on its wheels', async (
   return r;
 });
 
-check('a closed block has shopfronts onto its streets, not a band of glass round it', async (page) => {
+check('a closed block has shopfronts onto its streets, not a band of glass round it', { reads: true }, async (page) => {
   // Every closed tower's ground floor was one box of dark glass wrapped round
   // the block — a black stripe along every street and down every side onto
   // the next building. The faces onto a street are shopfronts now
@@ -3416,7 +3426,7 @@ check('a closed block has shopfronts onto its streets, not a band of glass round
   return r;
 });
 
-check('steel is folded, a ruin is broken at the top, and rubble is a heap', async (page) => {
+check('steel is folded, a ruin is broken at the top, and rubble is a heap', { reads: true }, async (page) => {
   // Three things that read as made, in seven rendered frames. A container
   // and a shop's shutter were boxes wearing painted folds — under one low
   // sun a painted fold is a stripe — so the folds are geometry now, and the
@@ -3530,7 +3540,7 @@ check('steel is folded, a ruin is broken at the top, and rubble is a heap', asyn
   return r;
 });
 
-check('some doorways have doors: shut, a door is a wall, and anyone can open one', async (page) => {
+check('some doorways have doors: shut, a door is a wall, and anyone can open one', { weight: 1.7 }, async (page) => {
   // A share of the shops' doorways carry a pair of steel leaves
   // (`registerDoors`). Shut, a door has to be everything a wall is — to a
   // body walking at it, a sight line, a round and a grenade — and opened
@@ -3715,7 +3725,7 @@ check('some doorways have doors: shut, a door is a wall, and anyone can open one
   return { doors: `${n}/${r.doorways}`, hostiles: r.hostiles.map((h) => h.outAt), leaf: `${r.leaf.out}/${r.leaf.staged}` };
 });
 
-check('past the walls is the rest of the city, out to the hills, and none of it in reach', async (page) => {
+check('past the walls is the rest of the city, out to the hills, and none of it in reach', { reads: true }, async (page) => {
   // From a roof the perimeter wall was the edge of the world: 60 m of
   // asphalt and then sky. Outside it now is waste ground rising to hills,
   // the city's blocks carried on along its street grid, and rubble against
@@ -3804,7 +3814,7 @@ check('past the walls is the rest of the city, out to the hills, and none of it 
   return r;
 });
 
-check('a shop is fitted out with shelving and a counter, not slabs, inside the boxes they collide as', async (page) => {
+check('a shop is fitted out with shelving and a counter, not slabs, inside the boxes they collide as', { reads: true }, async (page) => {
   // Every shelving unit and counter in a shop was a box the size of the
   // unit in a fully metallic paint, so every shop's fittings read as dark
   // slabs. They are shapes now (`shelvingGeo`, `counterGeo`) — uprights,
@@ -3849,7 +3859,7 @@ check('a shop is fitted out with shelving and a counter, not slabs, inside the b
   return r;
 });
 
-check('a crate is boards in a frame, inside the box it registers', async (page) => {
+check('a crate is boards in a frame, inside the box it registers', { reads: true }, async (page) => {
   // Every crate in the city — on a terrace, in a shop, on a floor — was a
   // box wearing a container's rust with its folds painted on, so a stack of
   // them read as small shipping containers. A crate is boards now, set 2 cm
@@ -3919,7 +3929,7 @@ check('a crate is boards in a frame, inside the box it registers', async (page) 
   return r;
 });
 
-check('rubble stops you and stops a bullet, and you can climb it', async (page) => {
+check('rubble stops you and stops a bullet, and you can climb it', { weight: 2.7 }, async (page) => {
   // Reported from play: objects you can clip right through, rubble first.
   // Every heap of rubble and every fallen slab in a rubble lot was drawn and
   // registered nowhere — the slabs stopped bullets and not boots, the heaps
@@ -4257,7 +4267,7 @@ check('a fallen slab is a ramp: its plane is what you walk up, stand on, see ove
   return { ramps: r.ramps, crossed: r.crossed, clear: r.clear, bare: r.bare, sighted: r.sighted, up: r.walk.up, step: +r.walk.step.toFixed(3), side: `${r.side.stopped}/${r.side.tried}`, off: r.off };
 });
 
-check('every prop stands clear of the rest, inside the sector, and on its floor', async (page) => {
+check('every prop stands clear of the rest, inside the sector, and on its floor', { reads: true }, async (page) => {
   // Containers, wrecks, barriers, drums and lamps went down wherever their
   // rolls put them: a container through the plaza's fountain on all three
   // pinned seeds, cars and barriers through one another, every prop rolled
@@ -4341,7 +4351,7 @@ check('every prop stands clear of the rest, inside the sector, and on its floor'
   return r;
 });
 
-check('what is set into the street lies flush on it, road or pavement', async (page) => {
+check('what is set into the street lies flush on it, road or pavement', { reads: true }, async (page) => {
   // Manhole covers and gully grates in the road, blister paving on the
   // pavement at each crossing, yellow lines and boxes: all decoration, laid a
   // centimetre over a surface you walk on and shoot at and registered nowhere,
@@ -4395,7 +4405,7 @@ check('what is set into the street lies flush on it, road or pavement', async (p
   return r;
 });
 
-check('a road arrow points the way its lane runs, its head to a point', async (page) => {
+check('a road arrow points the way its lane runs, its head to a point', { reads: true }, async (page) => {
   // An arrow is a shaft and two barbs raked back from its tip. The barbs were
   // turned by `side * rake` whichever way the lane ran, so every arrow for
   // traffic running toward −v, half of them, had its barbs mirrored across
@@ -4434,7 +4444,7 @@ check('a road arrow points the way its lane runs, its head to a point', async (p
   return r;
 });
 
-check('lane paint lies on the road and faces the sky', async (page) => {
+check('lane paint lies on the road and faces the sky', { reads: true }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const mesh = g.city.children.find((m) => m.material?.userData?.name === 'paint');
@@ -4558,7 +4568,7 @@ const CITY_FINGERPRINT = () => {
   };
 };
 
-check('nothing compiles at first contact', async (page) => {
+check('nothing compiles at first contact', { warm: true, weight: 3.3 }, async (page) => {
   // `renderer.compile` at boot compiled what was visible, which was the city.
   // Every hostile, every pooled tracer, casing and sprite, and the muzzle
   // flash — built lazily on the first shot — compiled on the first frame it
@@ -4680,7 +4690,7 @@ check('a slow frame is still real time, and the mouse moves once', async (page) 
   return r;
 });
 
-check('the low tier draws plainly: Lambert, no point lights, no canvas samples', async (page) => {
+check('the low tier draws plainly: Lambert, no point lights, no canvas samples', { weight: 2 }, async (page) => {
   // Reported from play: 14 fps on an Intel HD, with auto already on low.
   // Low dropped shadows and post and kept everything else, and everything
   // else was most of it: every lit pixel ran the PBR model against the sky's
@@ -5204,7 +5214,7 @@ check('the sky has weather in it', async (page) => {
   return r;
 });
 
-check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', async (page) => {
+check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', { weight: 4.5 }, async (page) => {
   // The ash (`ash.js`) is a few thousand points placed by their shader off
   // game time and a seed each, and it is kept out from under anything that
   // stands over a body by a height map baked from the box list. That map is
@@ -5220,6 +5230,11 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
     const g = window.__game;
     g.startRun();
     g.applyQuality('high');
+    // At half the high tier's resolution: what is measured is a share of the
+    // frame, which does not care, and the 22 frames were most of the slowest
+    // check in the suite, four minutes on CI.
+    g.renderer.setPixelRatio(g.renderer.getPixelRatio() / 2);
+    g.resize();
     g.startWave = () => {};
     g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
     if (g.viewScene) g.viewScene.visible = false;
@@ -5282,7 +5297,7 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
   const plumes = [];
   for (const s of sites) plumes.push(await changed('smoke', [-17, 30, 24], s));
 
-  const r = await page.evaluate(() => {
+  const read = await page.evaluate(() => {
     const g = window.__game, A = g.ashfall;
     // a blown drum sends up no more sparks
     const spark = A.embers.geometry.attributes.spark;
@@ -5309,7 +5324,8 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
     };
   });
   const pct = (v) => +(v * 100).toFixed(3);
-  Object.assign(r, { open: pct(open), indoors: pct(indoors), rooms: rooms.length, plumes: plumes.map(pct) });
+  // the measures first, so the line the runner prints carries them
+  const r = { open: pct(open), indoors: pct(indoors), rooms: rooms.length, plumes: plumes.map(pct), ...read };
   expect(r.rooms >= 6, `only ${r.rooms} shops to look into`);
   expect(r.open > 0.1, `ash changed only ${r.open}% of a frame in the open`);
   expect(r.indoors < r.open / 5, `ash changed ${r.indoors}% of a frame inside a shop, against ${r.open}% in the open`);
@@ -5365,7 +5381,7 @@ check('weeds grow where they can stand, and stay off the low tier', async (page)
   return r;
 });
 
-check('puddles and litter lie on the ground they are drawn on', async (page) => {
+check('puddles and litter lie on the ground they are drawn on', { reads: true }, async (page) => {
   // Standing water and drifted paper are decoration by the flush rule: a
   // centimetre up, walked over and shot through like the road paint. That is
   // only true if every corner of each one finds the same level ground — a
@@ -5425,7 +5441,7 @@ check('puddles and litter lie on the ground they are drawn on', async (page) => 
   return { puddles: r.puddles, litter: r.litter.verts / 4, shops: r.laid };
 });
 
-check('weeds move in the wind, and are still when time is', async (page) => {
+check('weeds move in the wind, and are still when time is', { weight: 1.9 }, async (page) => {
   // A still frame of weeds reads as a photograph pasted on the street. The
   // tips sway on game time, so this draws the same view at one wind time
   // twice and at another once, with the post chain off so its grain is not
@@ -6002,7 +6018,7 @@ check('on a roof, two hostiles cover the stair door and are waiting when you com
   return r;
 });
 
-check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', async (page) => {
+check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', { weight: 1.8 }, async (page) => {
   // Every lap of a stairwell lands at a floor of its building (`upperFloors`
   // in `city.js`): a slab you stand on, a ceiling, and walls of piers, sills
   // and lintels with the windows left open. This climbs every stairwell and
@@ -6255,7 +6271,7 @@ check('a building with a stairwell has floors: walked onto from the stair, seen 
   return { styles: [...styles], back: `${r.back.home}/${r.back.floors}, ${r.back.behind} behind the shaft`, drop: r.drop, floors: r.floors, windows: r.windows, walked: `${r.walked}/${r.walks}`, follow: r.follow };
 });
 
-check('a marksman holds a window over the street, and a holdout is found upstairs and walked down', async (page) => {
+check('a marksman holds a window over the street, and a holdout is found upstairs and walked down', { weight: 2.8 }, async (page) => {
   // The floors are somewhere to fight from and somewhere to go. A marksman's
   // perch is a roof, a terrace or now a floor's window (`findWindowPerches`
   // in `main.js`: one a building, the window that sees most of the street),
@@ -6462,7 +6478,7 @@ check('a marksman holds a window over the street, and a holdout is found upstair
     windows: `${r.windows}/${r.stairs}`, picks: r.picks, view: r.view.join(' ') };
 });
 
-check("a ruin's windows are holes: seen and shot through both ways, and its piers are not", async (page) => {
+check("a ruin's windows are holes: seen and shot through both ways, and its piers are not", { reads: true }, async (page) => {
   // A roofless ruin wears a facade, and the facade shader cut each painted
   // window into an opening with a room traced behind it — wrong in a shell
   // wall 0.7 m thick, whose far side is the courtyard. The walls are built
@@ -6513,7 +6529,7 @@ check("a ruin's windows are holes: seen and shot through both ways, and its pier
   return r;
 });
 
-check('a juggernaut stoops up a stairwell after you, and a warlord stays down', async (page) => {
+check('a juggernaut stoops up a stairwell after you, and a warlord stays down', { weight: 9 }, async (page) => {
   // A flight's headroom is a lap less the slab, at most the 2.5 m doors, and
   // a juggernaut is 2.57 m of body, so none was ever sent up a stair. It
   // stoops under a ceiling now, so the stair walk asks whether it fits
@@ -7155,7 +7171,7 @@ check('the armoury opens between waves, costs scrip not score, and what it fits 
   return { bought: r.bought, before: r.before, after: r.after };
 });
 
-check('a seed still lays out the city it did', async (page) => {
+check('a seed still lays out the city it did', { warm: true, weight: 6 }, async (page) => {
   // The most expensive lesson in this repo, finally made into a check.
   //
   // Three spends four `Math.random()` calls on a UUID for every object it
@@ -7361,12 +7377,16 @@ check('a seed still lays out the city it did', async (page) => {
   // (bare rooms: 2497/1540/12 b323ced2 (2139 e5d0438f), 1933/1268/11
   // 9d1c7f32 (1475 de4ab94c), 2526/1617/10 e1cfa671 (2044 9123bce6))
 
+  // Booted warm, as a player's browser boots: the warm-up frame the suite
+  // skips spends draws of the stream too, so without it the mark is another
+  // number. The runner hands this check a warm boot of the suite's seed, which
+  // stands in for that seed's reload.
+  const here = Number(new URL(page.url()).searchParams.get('seed'));
   const got = {};
   for (const seed of Object.keys(want)) {
-    await reloadGame({ seed: Number(seed) });
+    if (Number(seed) !== here) await reloadGame({ seed: Number(seed), warm: true });
     got[seed] = await page.evaluate(CITY_FINGERPRINT);
   }
-  await reloadGame();
 
   for (const [seed, w] of Object.entries(want)) {
     const r = got[seed];
@@ -7833,7 +7853,7 @@ check('a hostile is a body in kit, not a stack of boxes, and costs a spawn what 
   return r;
 });
 
-check('a wave is drawn a part at a time, and looks like the hostiles it is', async (page) => {
+check('a wave is drawn a part at a time, and looks like the hostiles it is', { weight: 2 }, async (page) => {
   // A hostile was fourteen drawn meshes, nine casting a shadow, so about
   // forty calls a frame across the main pass and both cascades, and a wave
   // was most of the frame's calls (731 against 251 for the empty street,
@@ -7917,7 +7937,7 @@ check('a wave is drawn a part at a time, and looks like the hostiles it is', asy
   return r;
 });
 
-check('the bake darkens the ground the city stands on', async (page) => {
+check('the bake darkens the ground the city stands on', { reads: true }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     const ground = g.city.children.find((m) => m.material?.userData?.name === 'asphalt');
@@ -8088,7 +8108,24 @@ let failed = 0;
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').split('=')[1];
 // Alternatives go between bars, `--only=a|b`, and run in suite order: what
 // one check leaves in the browser is what the next one finds.
-const selected = (ONLY ? checks.filter((c) => ONLY.split('|').some((o) => c.name.includes(o))) : checks).filter((c, i) => inShard(i));
+const wanted = ONLY ? checks.filter((c) => ONLY.split('|').some((o) => c.name.includes(o))) : checks;
+// Dealt heaviest first, each to the shard with the least on it so far, which
+// every shard works out the same way from the same list. Round-robin by index
+// put the three slow checks two to a shard, and that shard ran eight minutes
+// past the rest.
+const shardOf = new Map();
+if (SHARD.length === 2) {
+  const load = new Array(SHARD[1]).fill(0);
+  for (const c of [...wanted].sort((a, b) => b.weight - a.weight || wanted.indexOf(a) - wanted.indexOf(b))) {
+    const k = load.indexOf(Math.min(...load));
+    shardOf.set(c, k + 1);
+    load[k] += c.weight;
+  }
+}
+// The checks that only read go first, one after another, so they share the
+// shard's first boot; the rest keep suite order.
+const mine = wanted.filter((c) => SHARD.length !== 2 || shardOf.get(c) === SHARD[0]);
+const selected = [...mine.filter((c) => c.reads), ...mine.filter((c) => !c.reads)];
 if (SHARD.length === 2 && !(SHARD[0] >= 1 && SHARD[0] <= SHARD[1])) {
   console.log(`--shard wants i/n with 1 <= i <= n, got ${SHARD.join('/')}`);
   process.exit(1);
@@ -8104,18 +8141,37 @@ if (ONLY && !selected.length) {
  * used to take the whole run down with it: the reload threw outside any
  * check, the runner died on it, and every check still to come went unrun.
  */
-async function fresh() {
+async function fresh({ warm = false } = {}) {
   try {
-    await game.reload();
+    await game.reload({ warm });
     return true;
   } catch (err) {
     console.log(`       the page did not come back (${err.message.split('\n')[0]}); relaunching the browser`);
     await game.renew();
-    await game.reload();
+    await game.reload({ warm });
     return false;
   }
 }
 
+/**
+ * What a check that only reads must leave as it found it. Everything a check
+ * reaches to stage something moves one of these: the clock or the run, the
+ * seeded stream, the tier or resolution, the camera or the player, what is in
+ * the scene, the world's lists, the hostiles, the compiled programs. A miss
+ * here is a check that passes on a boot another check changed, so it is wide.
+ */
+const digest = (page) => page.evaluate(() => {
+  const g = window.__game, r = (v) => Math.round(v * 1e4) / 1e4;
+  const c = g.camera, p = g.player;
+  return JSON.stringify([
+    g.state, g.time, Math.random.mark?.(), g.activeTier, g.renderScale, g.renderer.getPixelRatio(),
+    ...c.position.toArray().map(r), ...c.quaternion.toArray().map(r),
+    ...(p ? [p.position.x, p.position.y, p.position.z, p.feetY, p.yaw, p.pitch].map(r) : []),
+    g.scene.children.length, g.scene.visible, g.city?.visible, g.viewScene?.visible,
+    g.world.boxes.length, g.world.solids.length, g.enemies?.length, g.score,
+    g.renderer.info.programs?.length,
+  ]);
+});
 const CHECK_LIMIT_S = 300;
 /** One run of one check on whatever is loaded: `{ ok, detail }` or `{ ok: false, err }`. */
 async function attempt(fn) {
@@ -8140,22 +8196,37 @@ async function attempt(fn) {
   }
 }
 
-// Every check gets a freshly booted game on the same seed. Sharing one
-// instance made results depend on what the previous check left behind.
-let loaded = false;     // whether the page already holds a game nothing has touched
-for (const [i, { name, fn }] of selected.entries()) {
+// Every check gets a freshly booted game on the same seed: sharing one made
+// results depend on what the previous check left behind. The exception is a
+// check marked `reads`, which may take a boot that nothing has changed, and is
+// checked for having changed nothing itself.
+// openGame has just booted one, and nothing has touched it
+let loaded = { warm: false, at: null };   // the untouched boot on the page, or null
+for (const [i, { name, fn, reads, warm }] of selected.entries()) {
   const began = Date.now();
-  if (!loaded) await fresh();
+  if (!loaded || loaded.warm !== warm) { await fresh({ warm }); loaded = { warm, at: null }; }
+  if (reads && !loaded.at) loaded.at = await digest(game.page);
   let out = await attempt(fn);
-  // A check that fails and leaves the browser wedged behind it failed because
-  // of the browser: it gets one more run, on a new one. A failure that leaves
-  // the page healthy is the game's, and stands. (After the last check there
-  // is nothing to load unless it failed.)
-  loaded = out.ok && i === selected.length - 1 ? true : await fresh();
-  if (!out.ok && !loaded) {
-    console.log(`       "${name}" wedged the browser; running it again on a new one`);
-    out = await attempt(fn);
-    loaded = await fresh();
+  if (out.ok && reads) {
+    const after = await digest(game.page);
+    if (after !== loaded.at) out = { ok: false, err: new Failure(`marked as only reading, but it changed the game: ${loaded.at} → ${after}`) };
+  }
+  // What the next check gets. One that only read hands its boot on; any
+  // other check, or one that failed, leaves a page to reload. After the last
+  // there is nothing to load unless it failed.
+  const next = selected[i + 1], nextWarm = !!next?.warm;
+  if (!(out.ok && reads) && !(out.ok && !next)) {
+    const healthy = await fresh({ warm: nextWarm });
+    // A check that fails and leaves the browser wedged behind it failed
+    // because of the browser: it gets one more run, on a new one. A failure
+    // that leaves the page healthy is the game's, and stands.
+    if (!out.ok && !healthy) {
+      console.log(`       "${name}" wedged the browser; running it again on a new one`);
+      if (warm !== nextWarm) await fresh({ warm });
+      out = await attempt(fn);
+      await fresh({ warm: nextWarm });
+    }
+    loaded = { warm: nextWarm, at: null };
   }
   const took = `${((Date.now() - began) / 1000).toFixed(0)}s`.padStart(4);
   if (out.ok) {
