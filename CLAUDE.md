@@ -3584,7 +3584,8 @@ dealt heaviest first to the lightest shard by `weight`, a check's CI cost
 in boots, 1 unless said: round-robin had put two of the three slow checks
 on one shard, eight minutes past the rest. Re-weight from the times the
 runner prints when a shard finishes well ahead of the others. After it, on
-CI: every shard 8-10 minutes. The ash check draws at half the high tier's
+CI: five shards ran their checks in 8.1-9.6 minutes and one in 4.8, and
+the whole run took ten minutes against twenty-five. The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
