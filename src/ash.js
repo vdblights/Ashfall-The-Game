@@ -23,7 +23,11 @@ import { SUN_DIR, SUN_COLOR } from './atmosphere.js';
  *   enough off that the height fog takes their feet, which is what makes
  *   them read as distant and enormous rather than near and small.
  *
- * Both are decoration by every rule this repo has for it: in neither
+ * - **Embers** rise off every lit fire barrel, a few dozen sparks a drum
+ *   climbing a few metres on the heat, swirling and drifting downwind and
+ *   going out as they cool. A drum that has blown sends up none.
+ *
+ * All three are decoration by every rule this repo has for it: in neither
  * collision list, no raycast target, no shadow, built inside the caller's
  * `reserve`, and drawing nothing from `Math.random` — every flake and puff
  * comes off a hash. They wear `ShaderMaterial`s with the scene's own fog
@@ -308,6 +312,61 @@ function plumeSites(seed, edge, heightAt) {
   return out;
 }
 
+/* ------------------------------------------------------------------ embers */
+
+/** Sparks a drum, and how high they climb before they are out. */
+const EMBERS = 40;
+
+const EMBER_VERT = /* glsl */`
+  attribute vec3 base;            // the top of the drum
+  attribute vec2 spark;           // a phase, and how lit the drum is (0 or 1)
+  uniform float time;
+  uniform float scale;
+  uniform vec2 wind;
+  varying float vHeat;
+  varying float vAlpha;
+
+  void main() {
+    float ph = spark.x;
+    // a spark lives a second or two: up fast off the fire, slowing as it cools
+    float life = 1.1 + 1.3 * fract(ph * 7.31);
+    float age = fract(ph * 3.17 + time / life);
+    float rise = (2.2 + 2.6 * fract(ph * 5.13)) * (1.0 - pow(1.0 - age, 2.0));
+    float swirl = ph * 6.2831 + time * (2.0 + 2.0 * fract(ph * 9.7));
+    vec3 p = base + vec3(0.0, rise, 0.0);
+    p.xz += vec2(cos(swirl), sin(swirl)) * (0.12 + 0.35 * age);
+    p.xz += wind * age * life * 0.8;
+
+    vec4 mvPosition = viewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    float dist = -mvPosition.z;
+    float px = (0.022 + 0.02 * fract(ph * 11.3)) * scale / max(dist, 0.05);
+    gl_PointSize = max(px, 1.5);
+    vHeat = 1.0 - age;
+    // twinkling as it tumbles, faint far off, and none off a dead drum
+    vAlpha = spark.y * clamp(px / 1.5, 0.0, 1.0) * smoothstep(0.0, 0.08, age)
+           * (0.65 + 0.35 * sin(time * 23.0 + ph * 40.0)) * exp(-dist * 0.012);
+    if (spark.y < 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+  }
+`;
+
+const EMBER_FRAG = /* glsl */`
+  varying float vHeat;
+  varying float vAlpha;
+
+  void main() {
+    float d = length(gl_PointCoord - 0.5) * 2.0;
+    float glow = (1.0 - smoothstep(0.2, 1.0, d)) * vAlpha;
+    if (glow < 0.01) discard;
+    // white-gold off the fire, through orange, to a dull red going out;
+    // bright enough that the bloom gives each a little halo
+    vec3 hot = mix(vec3(1.0, 0.18, 0.03), vec3(1.0, 0.62, 0.22), vHeat * vHeat);
+    gl_FragColor = vec4(hot * (1.0 + 7.0 * vHeat) * glow, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
 /* -------------------------------------------------------------------- both */
 
 export class Ashfall {
@@ -317,7 +376,7 @@ export class Ashfall {
    * @param outskirts the landscape past the wall (`city.outer`)
    * @param opts     `{ seed, edge, heightAt }`
    */
-  constructor(scene, world, outskirts, { seed = 1, edge = 136, heightAt = () => 0 } = {}) {
+  constructor(scene, world, outskirts, { seed = 1, edge = 136, heightAt = () => 0, barrels = [], drumHeight = 1 } = {}) {
     const fog = THREE.UniformsLib.fog;
 
     // ash
@@ -384,6 +443,34 @@ export class Ashfall {
     this.smoke.frustumCulled = false;
     this.smoke.renderOrder = 1;
     scene.add(this.smoke);
+
+    // embers, a few dozen off the top of each lit drum
+    this.barrels = barrels;
+    const m = barrels.length * EMBERS;
+    const eb = new Float32Array(m * 3), es = new Float32Array(m * 2);
+    barrels.forEach((b, bi) => {
+      const p = b.drum.position;
+      for (let k = 0; k < EMBERS; k++) {
+        const j = bi * EMBERS + k;
+        eb.set([p.x, p.y + drumHeight, p.z], j * 3);
+        es.set([hash(j * 97 + 3), 1], j * 2);
+      }
+    });
+    const egeo = new THREE.BufferGeometry();
+    egeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(m * 3), 3));
+    egeo.setAttribute('base', new THREE.BufferAttribute(eb, 3));
+    egeo.setAttribute('spark', new THREE.BufferAttribute(es, 2));
+    this.emberMat = new THREE.ShaderMaterial({
+      uniforms: { time: { value: 0 }, scale: { value: 600 }, wind: { value: WIND.clone() } },
+      vertexShader: EMBER_VERT, fragmentShader: EMBER_FRAG,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.embers = new THREE.Points(egeo, this.emberMat);
+    this.embers.name = 'embers';
+    this.embers.frustumCulled = false;
+    this.embers.renderOrder = 3;
+    scene.add(this.embers);
+    this.emberLit = barrels.map(() => true);
   }
 
   /** How many flakes this tier draws. */
@@ -401,5 +488,17 @@ export class Ashfall {
     this.smokeMat.uniforms.time.value = time;
     const f = 1 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
     this.ashMat.uniforms.scale.value = pixelHeight * 0.5 * f;
+    this.emberMat.uniforms.time.value = time;
+    this.emberMat.uniforms.scale.value = pixelHeight * 0.5 * f;
+    // a drum that has blown sends up no more sparks, and one put back
+    // alight for a new run sends them up again
+    const spark = this.embers.geometry.attributes.spark;
+    this.barrels.forEach((b, bi) => {
+      const lit = !b.burst;
+      if (lit === this.emberLit[bi]) return;
+      this.emberLit[bi] = lit;
+      for (let k = 0; k < EMBERS; k++) spark.setY(bi * EMBERS + k, lit ? 1 : 0);
+      spark.needsUpdate = true;
+    });
   }
 }

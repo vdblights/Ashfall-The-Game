@@ -249,9 +249,11 @@ class Game {
         this.player = new Player(this.camera, this.world);
         // the panes still in the windows, and the shards of the ones that go
         this.glass = reserve(() => new Glass(this.scene, this));
-        // ash falling round you, and the smoke over the city it falls from
+        // ash falling round you, the smoke over the city it falls from, and
+        // the sparks off every burning drum
         this.ashfall = reserve(() => new Ashfall(this.scene, this.world, this.outskirts, {
           seed: getSeed(), edge: SECTOR.edge, heightAt: outskirtsHeight,
+          barrels: this.barrels.list, drumHeight: BARREL.height,
         }));
       }],
       ['Arming you', 18, () => {
@@ -481,7 +483,7 @@ class Game {
     // The sky itself carries the ambient now (see setupEnvironment), so what
     // is left of the hemisphere is the warm ground bounce the dome cannot
     // supply — it has nothing below the horizon worth reflecting.
-    this.hemi = new THREE.HemisphereLight(0xa9b4c2, 0x7d6650, HEMI);
+    this.hemi = new THREE.HemisphereLight(0xb4b2ac, 0x7d6650, HEMI);
     this.scene.add(this.hemi);
 
     const sun = new THREE.DirectionalLight(SUN_COLOR, 3.0);

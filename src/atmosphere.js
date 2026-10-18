@@ -72,7 +72,10 @@ const ATMOSPHERE_GLSL = /* glsl */`
     // the horizon is looked at through many times the air the zenith is
     float air = pow(1.0 - up, 4.0);
 
-    vec3 zenith = vec3(0.050, 0.095, 0.215);
+    // not a clean blue: the air over a burning city is smoke all the way
+    // up, so the zenith is a stained slate, as bright as the blue it was so
+    // the light it puts on every surface through the environment is unmoved
+    vec3 zenith = vec3(0.085, 0.088, 0.105);
     vec3 horizonAway = vec3(0.235, 0.215, 0.205);
     vec3 horizonSun = vec3(0.980, 0.560, 0.270);
 

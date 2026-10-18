@@ -1359,7 +1359,15 @@ These each cost real debugging time. Changing them needs a reason.
   stands over the city` compares frames with each on and off: 0.23% of a
   frame on the plaza, 0.01% at worst inside six shops, and 0.125% inside
   with the roof test taken out; each column at least 0.5% looking at it.
-  Two draw calls, both transparent and casting nothing.
+  The check draws fourteen frames, and each pair is its own evaluate: all
+  of them in one held the page for three minutes, and CI's runner was shut
+  down under it, the same failure the stairwell check had. Embers (40 a lit drum) rise off every fire barrel the same way, additive
+  and bright enough to bloom; `update` reads `burst` off each drum, so a
+  blown one sends none up and a new run lights them again. Three draw
+  calls, all transparent and casting nothing. The zenith went from a clean
+  blue to a smoke-stained slate of the same brightness in the same pass, and
+  the hemisphere's sky colour with it, so the light the city gets is
+  unmoved and the low tier still matches.
 - **Water is a mirror for the sky and not for the sun; litter and puddles
   lie on one level or not at all.** A puddle (`puddles` in `city.js`) is a
   near-black fan at roughness 0.06, so it shows the environment map — the
@@ -3869,11 +3877,6 @@ secure origin, which Vercel provides.
 
 Suggested next work, in the order I would do it:
 
-0. **Give the sky ash to match.** The zenith is still a clean afternoon
-   blue, which the ash and smoke now argue with. Greying the zenith and
-   the cloud toward a smoke-stained haze is one function
-   (`ashAtmosphere`), but `the sky, the fog and the light are one
-   atmosphere` and the low tier's brightness match both measure it.
 1. **Tune the operation against play.** The payouts (300-1,500 a wave, in
    `OBJECTIVE_PAY`), the clocks, the lieutenant's pace and the holdout's
    drain are first guesses, and so is whether twelve waves is the right
