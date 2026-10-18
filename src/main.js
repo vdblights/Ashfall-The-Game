@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN } from './city.js';
+import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN, SECTOR, outskirtsHeight } from './city.js';
+import { Ashfall } from './ash.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
 import { Player, Input, LEAN } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
@@ -25,6 +26,7 @@ import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE } from './s
 import { initRandom, getSeed, reserve, spend } from './rng.js';
 
 const V1 = new THREE.Vector3();
+const ASH_PX = new THREE.Vector2();
 const V2 = new THREE.Vector3();
 const SIZE = new THREE.Vector2();
 
@@ -247,6 +249,12 @@ class Game {
         this.player = new Player(this.camera, this.world);
         // the panes still in the windows, and the shards of the ones that go
         this.glass = reserve(() => new Glass(this.scene, this));
+        // ash falling round you, the smoke over the city it falls from, and
+        // the sparks off every burning drum
+        this.ashfall = reserve(() => new Ashfall(this.scene, this.world, this.outskirts, {
+          seed: getSeed(), edge: SECTOR.edge, heightAt: outskirtsHeight,
+          barrels: this.barrels.list, drumHeight: BARREL.height,
+        }));
       }],
       ['Arming you', 18, () => {
         this.weapons = reserve(() => new WeaponSystem(this.viewScene, this));
@@ -475,7 +483,7 @@ class Game {
     // The sky itself carries the ambient now (see setupEnvironment), so what
     // is left of the hemisphere is the warm ground bounce the dome cannot
     // supply — it has nothing below the horizon worth reflecting.
-    this.hemi = new THREE.HemisphereLight(0xa9b4c2, 0x7d6650, HEMI);
+    this.hemi = new THREE.HemisphereLight(0xb4b2ac, 0x7d6650, HEMI);
     this.scene.add(this.hemi);
 
     const sun = new THREE.DirectionalLight(SUN_COLOR, 3.0);
@@ -617,6 +625,7 @@ class Game {
     for (const { m, map } of this.normalMapped) m.normalMap = cfg.normals ? map : null;
     for (const m of this.materials) m.needsUpdate = true;   // shadow state is compiled in
     this.dust.visible = cfg.dust;
+    this.ashfall.setTier(level);
 
     // the point-light count is compiled into every lit program, so it is set
     // here, with the tier, and held constant until the next tier change
@@ -1953,6 +1962,7 @@ class Game {
     this.flickerFires(elapsed);
     const wind = this.paintedMaterials?.weedMat?.userData.windTime;
     if (wind) wind.value = this.time;
+    this.updateAsh();
     this.perf.beforeRender();
     this.render();
     const ended = performance.now();
@@ -2141,6 +2151,12 @@ class Game {
     this.sky.position.copy(this.camera.position);
     this.dust.position.set(
       Math.round(this.player.position.x / 30) * 30, 0, Math.round(this.player.position.z / 30) * 30);
+  }
+
+  /** The ash and the smoke move on game time, sized to the pixels drawn. */
+  updateAsh() {
+    this.renderer.getDrawingBufferSize(ASH_PX);
+    this.ashfall.update(this.time, this.camera, ASH_PX.y);
   }
 
   /** Occasional distant firefight, so the sector never feels empty. */
