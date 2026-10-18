@@ -110,7 +110,7 @@ export async function main() {
   }
   await gh(`/repos/{repo}/issues/${issue.number}`, {
     method: 'PATCH',
-    body: JSON.stringify({ body: draftBody(issue.number, text, 'claude', `Topic: ${topic.label}. Close this issue to drop it.`) }),
+    body: JSON.stringify({ body: draftBody(issue.number, text, 'claude', `Topic: ${topic.label}. Close this issue once it is posted, or to drop it.`) }),
   });
 }
 

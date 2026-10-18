@@ -25,42 +25,50 @@ account's last ten drafts, so it doesn't repeat itself.
 
 ## How a post goes out
 
+Free, with no X developer account:
+
 1. A draft appears: a comment on a merged PR, or a new `devlog` issue.
-2. Edit it if you want different words. The text in the box is what gets
-   posted.
-3. Open **Actions → Devlog → Run workflow**, enter the PR or issue number,
-   tick **post**, and run it. The draft changes to a link to the post, and a
-   draft issue closes.
+   GitHub tells you as it does for any comment or issue, by email or in its
+   app.
+2. Tap **Post it on X** under the draft. X opens, on the web or in its app,
+   with the post filled in for whichever account you are signed in as.
+   Check it and press Post.
+3. Close a draft issue once it is posted. To drop one, just close it.
 
-To drop a scheduled draft, close its issue. For a PR, untick **post** to
-draft again, which replaces the draft (or fill in **text** to set it by
-hand). Anything already posted is refused unless you fill in **text**, so
-nothing is posted twice by accident. Label a PR `no-devlog` to skip it;
-Dependabot's are skipped anyway.
+The link carries the text as drafted. If you edit the box, copy the text
+into X instead. Label a PR `no-devlog` to skip it; Dependabot's are skipped
+anyway.
 
-**Fully automatic:** set the repository variable `DEVLOG_AUTOPOST` to `true`
-and every draft is posted the moment it is written, merges and scheduled
-posts alike. Unset it to go back. To stop the scheduled posts, disable the
+**Posting from the workflow (optional, paid).** X's API now charges for every
+post it creates, and more for a post with a link in it, which every post
+here has. If you add the X keys (below), each draft also offers a second
+way: open **Actions → Devlog → Run workflow**, enter the PR or issue number,
+tick **post**, and run it. It posts the text in the box, as edited, and the
+draft changes to a link to the post. Anything already posted is refused
+unless you fill in **text**, so nothing is posted twice by accident. To
+draft a PR's post again, run it with **post** unticked.
+
+**Fully automatic** needs the keys too: set the repository variable
+`DEVLOG_AUTOPOST` to `true` and every draft is posted the moment it is
+written. Unset it to go back. To stop the scheduled drafts, disable the
 `Devlog schedule` workflow in the Actions tab.
 
 ## Setting it up
 
 All of this is in your own accounts; none of it goes in the repo or in chat.
 
-### 1. The X account and its keys
+### 1. The X account
 
-1. Create the X account for the game (for example `@ashfallgame`) and sign in
-   as it.
-2. Go to <https://developer.x.com>, sign up for a developer account as that
-   account, and check what the current plan allows: you need to be able to
-   create posts through the API.
-3. In the developer portal, create a Project and an App inside it.
-4. In the App's **User authentication settings**, set app permissions to
-   **Read and write** (type: Web App or Automated App/Bot; any callback URL,
-   such as your game's URL, is fine since this never signs anyone in).
-5. In the App's **Keys and tokens**, copy the **API Key and Secret**, then
-   generate an **Access Token and Secret**. Generate the access token *after*
-   step 4, or it will be read-only and posting fails with a 403.
+Create the X account for the game and sign in to it on your phone and your
+browser. That is all the free way needs.
+
+**Only for posting from the workflow:** go to <https://developer.x.com> as
+that account and buy API credit (it is pay as you go; check the current price
+per post there). Create an App, set its **User authentication settings** to
+**Read and write**, then in **Keys and tokens** copy the **API Key and
+Secret** and generate an **Access Token and Secret**. Generate the token
+*after* setting Read and write, or it is read-only and posting fails with a
+403.
 
 ### 2. Into GitHub
 
@@ -68,17 +76,17 @@ In the repo, **Settings → Secrets and variables → Actions**:
 
 | Secrets | From |
 | --- | --- |
-| `X_API_KEY` | API Key |
+| `ANTHROPIC_API_KEY` | from <https://console.anthropic.com>; writes the drafts |
+| `X_API_KEY` | API Key (optional, paid) |
 | `X_API_SECRET` | API Key Secret |
 | `X_ACCESS_TOKEN` | Access Token |
 | `X_ACCESS_TOKEN_SECRET` | Access Token Secret |
-| `ANTHROPIC_API_KEY` | optional, from <https://console.anthropic.com> |
 
 | Variables (all optional) | What |
 | --- | --- |
 | `DEVLOG_LINK` | the link every post ends with, such as where the game is hosted; the repo if unset |
 | `DEVLOG_HANDLE` | the account's handle without `@`, for the link back to each post |
-| `DEVLOG_AUTOPOST` | `true` to post every draft without asking |
+| `DEVLOG_AUTOPOST` | `true` to post every draft without asking (needs the X keys) |
 
 Without `ANTHROPIC_API_KEY` an update's draft is a template off the PR's
 title ("ASHFALL dev log: …") and there are no scheduled posts. With it,

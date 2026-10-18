@@ -52,6 +52,26 @@ await check('the template fits a post, however long the title', () => {
   assert.ok(long.includes('…'));
 });
 
+await check('a draft carries a link that opens X with exactly its text, and names the workflow only with keys', async () => {
+  const { draftBody, textIn } = await import('./github.js');
+  const text = 'Doors open & close now. 50% of the time? #gamedev\n\nhttps://example.com/play?seed=7';
+  const keys = ['X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET'];
+  const saved = keys.map((k) => process.env[k]);
+  try {
+    for (const k of keys) delete process.env[k];
+    const free = draftBody(12, text, 'claude');
+    const url = new URL(free.match(/\(([^)\s]+)\)\*\* opens X/)[1]);
+    assert.equal(url.origin + url.pathname, 'https://x.com/intent/post');
+    assert.equal(url.searchParams.get('text'), text);
+    assert.equal(textIn(free), text);
+    assert.ok(!free.includes('Run workflow'), 'names a workflow that cannot post');
+    for (const k of keys) process.env[k] = 'x';
+    assert.ok(draftBody(12, text, 'claude').includes('Run workflow'));
+  } finally {
+    keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+  }
+});
+
 // run.js and schedule.js read their inputs from the environment.
 const run = (await import('./run.js')).main;
 const schedule = await import('./schedule.js');

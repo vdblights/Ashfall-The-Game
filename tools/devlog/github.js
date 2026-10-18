@@ -6,6 +6,7 @@
 // holds the post's text in a ```text block, which is what gets posted, so
 // editing the block edits the post.
 import { postLength, LIMIT } from './draft.js';
+import { xConfigured } from './x.js';
 
 const env = process.env;
 const API = 'https://api.github.com';
@@ -51,14 +52,23 @@ export function textIn(body) {
 
 const block = (text) => '```text\n' + text + '\n```';
 
+// X's own share link: opens the composer with the post filled in, on the
+// web or in the app, for the signed-in account. Free, and needs no API.
+export const intentUrl = (text) => `https://x.com/intent/post?text=${encodeURIComponent(text)}`;
+
 export function draftBody(number, text, by, note = '') {
   const who = { claude: 'Claude', template: 'the template', hand: 'hand' }[by] ?? by;
+  const api = xConfigured()
+    ? ` Or run **Actions → Devlog → Run workflow** with \`${number}\` and **post** ticked, which posts the text in the box (edit it first if you like).`
+    : '';
   return `${MARK} draft -->
 **Dev log draft** — not posted to X.${note ? `\n\n${note}` : ''}
 
 ${block(text)}
 
-${postLength(text)}/${LIMIT} characters, written by ${who}. To post it, edit the text above if you want to, then run **Actions → Devlog → Run workflow** with \`${number}\` and **post** ticked.`;
+**[Post it on X](${intentUrl(text)})** opens X with this text filled in; check it and press Post.${api}
+
+${postLength(text)}/${LIMIT} characters, written by ${who}. The link carries the text as drafted, so if you edit the box, copy it into X instead.`;
 }
 
 export function postedBody(text, id, note = '') {

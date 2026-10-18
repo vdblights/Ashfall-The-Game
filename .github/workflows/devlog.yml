@@ -1,7 +1,8 @@
 name: Devlog
 
 # Drafts a post about the game for X from every merged pull request, as a
-# comment on it, and posts a draft only when told to: by running this
+# comment on it with a share link that posts it by hand for free, and posts
+# through the paid X API only when told to: by running this
 # workflow by hand with its PR or issue number and `post` ticked, or for
 # every draft once the repo variable DEVLOG_AUTOPOST is `true`. The scheduled
 # posts are devlog-schedule.yml. tools/devlog/README.md has the rest.

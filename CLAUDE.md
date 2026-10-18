@@ -47,8 +47,10 @@ builds, never to play.
 - **The X dev log drafts; it does not send.** `tools/devlog/` (its README
   has the setup) drafts a post for X on each merged PR, as a comment, and
   three times a week on another topic, as a `devlog` issue, in the voice set
-  out in `tools/devlog/voice.md`. Nothing reaches X until the owner runs the
-  `Devlog` workflow with `post` ticked, or sets `DEVLOG_AUTOPOST`. Posting is
+  out in `tools/devlog/voice.md`. Nothing reaches X until the owner posts it:
+  by default with the draft's share link (free; X's API charges per post,
+  more with a link, so its keys are optional), or by running the `Devlog`
+  workflow with `post` ticked, or by setting `DEVLOG_AUTOPOST`. Posting is
   public and cannot be taken back, so do not turn that on, or post, on your
   own. A PR's title and description are what its post is written from, so
   write them as something a player could read; label a PR `no-devlog` to
