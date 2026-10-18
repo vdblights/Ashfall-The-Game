@@ -1140,15 +1140,24 @@ function jerseyBarrier() {
  * the silhouette wherever you see a side end-on. It wears a plain sheet
  * (`rustSheets`) for the same reason: painted folds over real ones read as
  * two sets at different pitches.
+ *
+ * No two parts share a face. The folds' troughs used to lie exactly on the
+ * core's faces, and the posts, castings, rails and sill all ran out to the
+ * collider's faces together, so two textures fought for the same plane and
+ * the steel flickered as the view moved. The core stands 2 cm behind the
+ * troughs now, and only the castings reach the collider: each other piece
+ * stops a few millimetres short of it, by a different amount, so wherever
+ * two of them overlap one is in front.
  */
 function shippingContainer() {
   const R = TILE.rust;
   const w = 2.5, h = 2.6, d = 6.0;
-  const cx = w / 2 - 0.06, cz = d / 2 - 0.1;          // the core's faces
+  const cx = w / 2 - 0.06, cz = d / 2 - 0.1;          // the folds' troughs
   const ribs = { pitch: 0.28, depth: 0.04, crest: 0.3, tile: R };
+  const back = 0.02;                                   // the core, behind them
   const parts = [
-    chamferGeo(cx * 2, h - 0.2, cz * 2, 0.03, R, [0, h / 2, 0]),     // core
-    chamferGeo(w, 0.2, d, 0.05, R, [0, 0.1, 0]),                      // sill
+    chamferGeo((cx - back) * 2, h - 0.2 - back, (cz - back) * 2, 0.03, R, [0, (h - back) / 2, 0]),   // core
+    chamferGeo(w - 0.03, 0.19, d - 0.03, 0.05, R, [0, 0.105, 0]),                                     // sill
   ];
   const panelH = h - 0.4;
   // the long sides, folds out toward ±X
@@ -1165,21 +1174,25 @@ function shippingContainer() {
   const roof = corrugateGeo(d - 0.36, w - 0.36, { pitch: 0.5, depth: 0.025, crest: 0.35, tile: R });
   roof.applyMatrix4(new THREE.Matrix4().set(0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1));
   parts.push(roof.translate(-(w - 0.36) / 2, h - 0.1, 0));
-  // a top rail round the roof, the corner posts and their castings
-  for (const sx of [-1, 1]) parts.push(chamferGeo(0.14, 0.2, d, 0.03, R, [sx * (w / 2 - 0.07), h - 0.1, 0]));
-  for (const sz of [-1, 1]) parts.push(chamferGeo(w, 0.2, 0.16, 0.03, R, [0, h - 0.1, sz * (d / 2 - 0.08)]));
+  // a top rail round the roof, the corner posts and their castings. Only
+  // the castings reach the collider; the rails and posts stop short of it,
+  // and of each other, inside the castings, with chamfers of their own, or
+  // two bevels meet on one plane (x + y is 3.8 for the casting's 1.25 + 2.6
+  // less 0.05, and for a rail's 1.23 + 2.59 less 0.02)
+  for (const sx of [-1, 1]) parts.push(chamferGeo(0.12, 0.18, d - 0.4, 0.015, R, [sx * (w / 2 - 0.08), h - 0.1, 0]));
+  for (const sz of [-1, 1]) parts.push(chamferGeo(w - 0.03, 0.17, 0.14, 0.015, R, [0, h - 0.1, sz * (d / 2 - 0.085)]));
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      parts.push(chamferGeo(0.16, h, 0.18, 0.03, R, [sx * (w / 2 - 0.08), h / 2, sz * (d / 2 - 0.09)]));
+      parts.push(chamferGeo(0.14, h - 0.4, 0.16, 0.02, R, [sx * (w / 2 - 0.08), h / 2, sz * (d / 2 - 0.09)]));
       for (const sy of [0, 1]) {
         parts.push(chamferGeo(0.26, 0.26, 0.26, 0.05, R,
           [sx * (w / 2 - 0.13), sy ? h - 0.13 : 0.13, sz * (d / 2 - 0.13)]));
       }
     }
   }
-  // four locking bars across the doors, standing off the leaves
+  // four locking bars across the doors, standing off the leaves' crests
   for (const bx of [-0.78, -0.26, 0.26, 0.78]) {
-    parts.push(chamferGeo(0.06, h - 0.6, 0.06, 0.02, R, [bx, h / 2, -cz - 0.06]));
+    parts.push(chamferGeo(0.06, h - 0.6, 0.06, 0.02, R, [bx, h / 2, -cz - 0.064]));
   }
   return mergeIntoOne(parts);
 }

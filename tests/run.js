@@ -3449,6 +3449,30 @@ check('steel is folded, a ruin is broken at the top, and rubble is a heap', asyn
     const bb = C.boundingBox;
     out.container = { slope: +(slope / total).toFixed(3),
       x: +Math.max(-bb.min.x, bb.max.x).toFixed(3), z: +Math.max(-bb.min.z, bb.max.z).toFixed(3), top: +bb.max.y.toFixed(3) };
+    // and no two of its facets on one plane facing one way: two textures
+    // fighting for a plane is the flicker play reported on the containers.
+    // A point just inside each facet is asked of every other facet that
+    // faces the same way within a millimetre of it.
+    const tris = [];
+    facets(C, (nrm, area, v) => tris.push({ n: nrm.clone(), d: nrm.dot(v[0]), v: v.map((p) => p.clone()), area }));
+    const inside = (t, p) => {
+      for (let k = 0; k < 3; k++) {
+        const a = t.v[k], b = t.v[(k + 1) % 3];
+        const e = b.clone().sub(a), q = p.clone().sub(a);
+        if (e.cross(q).dot(t.n) < -1e-9) return false;
+      }
+      return true;
+    };
+    let fought = 0;
+    for (const t of tris) {
+      const c = t.v[0].clone().add(t.v[1]).add(t.v[2]).multiplyScalar(1 / 3);
+      const probes = t.v.map((p) => p.clone().lerp(c, 0.2));
+      probes.push(c);
+      const hit = tris.some((o) => o !== t && o.n.dot(t.n) > 0.999 && Math.abs(o.d - t.d) < 0.001
+        && probes.some((p) => inside(o, p)));
+      if (hit) fought += t.area;
+    }
+    out.container.fought = +fought.toFixed(3);
     // shutters: anything in a rust sheet that is not a container or a drum,
     // and whether its folds run across it (a slat's face tips up or down)
     const shut = w.solids.filter((m) => (m.material?.userData?.name || '').startsWith('rustsheet')
@@ -3497,6 +3521,7 @@ check('steel is folded, a ruin is broken at the top, and rubble is a heap', asyn
   });
   const c = r.container;
   expect(c.slope > 0.15, `only ${(c.slope * 100).toFixed(1)}% of a container is the slope of a fold — its steel is painted, not folded`);
+  expect(c.fought === 0, `${c.fought} m² of a container's faces share a plane with another of its faces, and flicker`);
   expect(c.x <= 1.251 && c.z <= 3.001 && c.top <= 2.601, `a container reaches ${c.x} x ${c.z} m and ${c.top} m up, past its 1.25 x 3 x 2.6 m collider`);
   expect(r.shutters >= 10 && r.slatted === r.shutters, `${r.slatted} of ${r.shutters} shutters are slatted across`);
   expect(r.walls >= 10 && r.broken >= r.walls * 0.5, `${r.broken} of ${r.walls} ruin walls step down at the top`);
