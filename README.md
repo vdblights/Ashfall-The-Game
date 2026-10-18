@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-[![CI](https://github.com/vdblights/Cyrus-game/actions/workflows/ci.yml/badge.svg)](https://github.com/vdblights/Cyrus-game/actions/workflows/ci.yml)
+[![CI](https://github.com/vdblights/Ashfall-The-Game/actions/workflows/ci.yml/badge.svg)](https://github.com/vdblights/Ashfall-The-Game/actions/workflows/ci.yml)
 
 A small browser first-person shooter set in an abandoned city at dusk.
 Operation ASHFALL: twelve waves in the ruins of Carrow, then as long as you
