@@ -1515,7 +1515,16 @@ These each cost real debugging time. Changing them needs a reason.
   box the wall piece it replaced did — `(x + mid) - len / 2`, not `x + a`,
   which is the same number in arithmetic and not in floating point, and the
   layout check's fingerprint, at a millimetre, read the difference as a
-  moved city. What it costs is the next item's table.
+  moved city. **No two parts of a container share a plane**: the folds'
+  troughs lay on the core's faces and the posts, castings, rails and sill
+  all ran out to the collider together, 19.8 m² of each container drawn
+  twice, which flickered in play as the view moved. The core stands 2 cm
+  behind the troughs, only the castings reach the collider, and the rails
+  and posts stop inside them with chamfers of their own — two 45° bevels
+  meet on one plane whenever their two offsets sum the same, which the
+  first fix missed. `steel is folded` asks every facet of the shape for
+  another on its plane, facing its way: 0 m², against 19.8 on `main`.
+  What it costs is the next item's table.
 - **A closed block's ground floor is shopfronts onto its streets.** It was
   one box of dark glass wrapped round the block, a black stripe down every
   street and every side. `storefront` in `city.js` builds the faces that
