@@ -1,67 +1,19 @@
-// The devlog workflow's one entry point (.github/workflows/devlog.yml).
+// The Devlog workflow's entry point (.github/workflows/devlog.yml).
 //
-// A merged pull request gets a draft post as a comment on it. Nothing goes to
-// X unless one of two things says so:
-//   - someone runs the workflow by hand with `post` on, which posts the text
-//     in that comment (edit the comment first to change it); or
+// A merged pull request gets a draft post as a comment on it; schedule.js
+// drafts posts on other topics as issues. Nothing goes to X unless one of two
+// things says so:
+//   - someone runs the workflow by hand with a PR or issue number and `post`
+//     ticked, which posts the text in its draft (edit the draft to change
+//     it); or
 //   - the repo variable DEVLOG_AUTOPOST is `true`, which posts every draft as
 //     soon as it is written.
 import { readFile } from 'node:fs/promises';
 import { draftPost, postLength, LIMIT } from './draft.js';
 import { postToX, xConfigured } from './x.js';
+import { gh, findRecord, saveRecord, isPosted, textIn, draftBody, postedBody, recentPosts, LABEL } from './github.js';
 
 const env = process.env;
-const REPO = env.GITHUB_REPOSITORY;
-const MARK = '<!-- ashfall-devlog';
-const API = 'https://api.github.com';
-
-async function gh(path, init = {}) {
-  const res = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
-  });
-  if (!res.ok) throw new Error(`GitHub ${init.method ?? 'GET'} ${path}: ${res.status} ${await res.text()}`);
-  return res.status === 204 ? null : res.json();
-}
-
-async function findComment(number) {
-  const comments = await gh(`/repos/${REPO}/issues/${number}/comments?per_page=100`);
-  return comments.find((c) => c.body.startsWith(MARK)) ?? null;
-}
-
-async function saveComment(number, existing, body) {
-  if (existing) return gh(`/repos/${REPO}/issues/comments/${existing.id}`, { method: 'PATCH', body: JSON.stringify({ body }) });
-  return gh(`/repos/${REPO}/issues/${number}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
-}
-
-const block = (text) => '```text\n' + text + '\n```';
-
-function draftBody(number, text, by) {
-  return `${MARK} draft -->
-**Dev log draft** — not posted to X.
-
-${block(text)}
-
-${postLength(text)}/${LIMIT} characters, written by ${by === 'claude' ? 'Claude' : 'the template'}. To post it, edit the text above if you want to, then run **Actions → Devlog → Run workflow** with PR \`${number}\` and **post** ticked.`;
-}
-
-function postedBody(text, id, handle) {
-  const url = handle ? `https://x.com/${handle}/status/${id}` : `https://x.com/i/web/status/${id}`;
-  return `${MARK} posted:${id} -->
-**Posted to X:** ${url}
-
-${block(text)}`;
-}
-
-function draftIn(comment) {
-  const m = comment?.body.match(/```text\n([\s\S]*?)\n```/);
-  return m ? m[1] : null;
-}
 
 // Dependabot's bumps and anything labelled no-devlog are not news.
 function skip(pr) {
@@ -70,12 +22,16 @@ function skip(pr) {
   return null;
 }
 
-const link = () => env.DEVLOG_LINK || `https://github.com/${REPO}`;
+export const link = () => env.DEVLOG_LINK || `https://github.com/${env.GITHUB_REPOSITORY}`;
 
-async function publish(number, text, comment) {
+// Posts `text`, records it on `number`, and closes it if it is a draft issue.
+export async function publish(number, text, record) {
   if (postLength(text) > LIMIT) throw new Error(`The post is ${postLength(text)} characters, over X's ${LIMIT}`);
   const id = await postToX(text);
-  await saveComment(number, comment, postedBody(text, id, env.DEVLOG_HANDLE));
+  await saveRecord(number, record, postedBody(text, id));
+  if (record?.kind === 'issue') {
+    await gh(`/repos/{repo}/issues/${number}`, { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) });
+  }
   console.log(`Posted ${id}`);
 }
 
@@ -83,46 +39,59 @@ async function onMerged(pr) {
   if (!pr.merged) return console.log('Closed without merging; nothing to say.');
   const why = skip(pr);
   if (why) return console.log(`Skipping #${pr.number}: ${why}.`);
-  const comment = await findComment(pr.number);
-  if (comment) return console.log(`#${pr.number} already has a dev log comment.`);
-  const { text, by } = await draftPost(pr, link());
+  const record = await findRecord(pr.number);
+  if (record) return console.log(`#${pr.number} already has a dev log record.`);
+  const { text, by } = await draftPost(pr, link(), await recentPosts());
   console.log(`Draft (${by}, ${postLength(text)} characters):\n${text}`);
+  // The label is what lets the scheduled posts see this one and not repeat it.
+  await gh(`/repos/{repo}/issues/${pr.number}/labels`, { method: 'POST', body: JSON.stringify({ labels: [LABEL] }) });
   if (env.DEVLOG_AUTOPOST === 'true') {
     if (!xConfigured()) throw new Error('DEVLOG_AUTOPOST is on but the X secrets are not all set');
     return publish(pr.number, text, null);
   }
-  await saveComment(pr.number, null, draftBody(pr.number, text, by));
+  await saveRecord(pr.number, null, draftBody(pr.number, text, by));
 }
 
 async function onDispatch() {
-  const number = Number(env.INPUT_PR);
-  if (!Number.isInteger(number) || number < 1) throw new Error(`"${env.INPUT_PR}" is not a pull request number`);
-  const pr = await gh(`/repos/${REPO}/pulls/${number}`);
-  const comment = await findComment(number);
+  const number = Number(env.INPUT_NUMBER);
+  if (!Number.isInteger(number) || number < 1) throw new Error(`"${env.INPUT_NUMBER}" is not a PR or issue number`);
+  const record = await findRecord(number);
   const override = env.INPUT_TEXT?.trim();
 
   if (env.INPUT_POST !== 'true') {
     // Draft again, replacing an earlier draft but never a posted record.
-    if (comment?.body.startsWith(`${MARK} posted:`)) throw new Error(`#${number} was already posted`);
-    const { text, by } = override ? { text: override, by: 'hand' } : await draftPost(pr, link());
-    await saveComment(number, comment, draftBody(number, text, by));
-    return console.log(`Draft saved on #${number}:\n${text}`);
+    if (isPosted(record)) throw new Error(`#${number} was already posted`);
+    let draft;
+    if (override) draft = { text: override, by: 'hand' };
+    else if (record?.issue.pull_request || !record) {
+      const pr = await gh(`/repos/{repo}/pulls/${number}`);
+      draft = await draftPost(pr, link(), await recentPosts());
+    } else {
+      throw new Error(`#${number} is a scheduled draft; give the text input, or run Devlog schedule for a new one`);
+    }
+    await saveRecord(number, record, draftBody(number, draft.text, draft.by));
+    return console.log(`Draft saved on #${number}:\n${draft.text}`);
   }
 
-  if (comment?.body.startsWith(`${MARK} posted:`) && !override) {
+  if (isPosted(record) && !override) {
     throw new Error(`#${number} was already posted; give the text input to post again on purpose`);
   }
-  const text = override || draftIn(comment);
+  const text = override || textIn(record?.body);
   if (!text) throw new Error(`#${number} has no draft to post; run once without post to draft one`);
-  await publish(number, text, comment);
+  await publish(number, text, record);
 }
 
-const name = env.GITHUB_EVENT_NAME;
-if (name === 'pull_request') {
-  const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'));
-  await onMerged(event.pull_request);
-} else if (name === 'workflow_dispatch') {
-  await onDispatch();
-} else {
-  throw new Error(`Not written for ${name} events`);
+export async function main() {
+  const name = env.GITHUB_EVENT_NAME;
+  if (name === 'pull_request') {
+    const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'));
+    await onMerged(event.pull_request);
+  } else if (name === 'workflow_dispatch') {
+    await onDispatch();
+  } else {
+    throw new Error(`Not written for ${name} events`);
+  }
 }
+
+// Run only as the entry point, so schedule.js and the checks can import it.
+if (import.meta.url === `file://${process.argv[1]}`) await main();

@@ -44,13 +44,15 @@ builds, never to play.
   list. A status line here is wrong the moment anyone merges, and it was the
   only thing needing correction in four sessions running. Write down what was
   *learned* and what it *measured*; leave the bookkeeping to git.
-- **Every merged PR is a dev log post, drafted, not sent.** The `Devlog`
-  workflow (`tools/devlog/`, its README has the setup) comments a draft post
-  for X on each merged PR; nothing reaches X until the owner runs it by hand
-  with `post` ticked, or sets `DEVLOG_AUTOPOST`. Posting is public and cannot
-  be taken back, so do not turn that on, or post, on your own. A PR title is
-  the template's whole input, so write it as something a player would read;
-  label a PR `no-devlog` to skip it.
+- **The X dev log drafts; it does not send.** `tools/devlog/` (its README
+  has the setup) drafts a post for X on each merged PR, as a comment, and
+  three times a week on another topic, as a `devlog` issue, in the voice set
+  out in `tools/devlog/voice.md`. Nothing reaches X until the owner runs the
+  `Devlog` workflow with `post` ticked, or sets `DEVLOG_AUTOPOST`. Posting is
+  public and cannot be taken back, so do not turn that on, or post, on your
+  own. A PR's title and description are what its post is written from, so
+  write them as something a player could read; label a PR `no-devlog` to
+  skip it.
 - **This file is the only memory that survives.** Sessions run in a container
   that is reclaimed when they end, so anything worth keeping — a preference, a
   measurement, a trap someone already fell into — belongs in here or in

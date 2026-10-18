@@ -1,8 +1,11 @@
-// Turns a merged pull request into a post about the game.
+import { readFileSync } from 'node:fs';
+
+// Writes posts about the game: from a merged pull request here, and on
+// other topics for schedule.js.
 //
-// Without ANTHROPIC_API_KEY the post is a template off the PR's title. With
-// it, Claude writes the post from the title and description, and the template
-// is the fallback whenever that fails or comes back too long.
+// Without ANTHROPIC_API_KEY a merged PR's post is a template off its title.
+// With it, Claude writes it in the voice set out in voice.md, and the
+// template is the fallback whenever that fails or comes back too long.
 
 // X counts every link as 23 characters whatever its length, and anything
 // outside the Basic Multilingual Plane (most emoji) as two.
@@ -38,29 +41,28 @@ export function templatePost(pr, link) {
   return text;
 }
 
-const SYSTEM = `You write short posts for the X account that follows the development of ASHFALL, a free browser first-person shooter: wave survival in a procedurally generated ruined city, hand-written in JavaScript with three.js, no downloads.
+// The voice is a file of its own so it can be changed without touching code.
+const VOICE = readFileSync(new URL('./voice.md', import.meta.url), 'utf8');
 
-You are given one pull request that was just merged. Write one post about it for players and other developers.
-
-- Say what changed in the game in plain words a player would notice. Skip internals (function names, file names, check counts, seeds) unless the change is only internal, in which case say what it makes possible or better.
-- Never claim anything the pull request does not say.
-- No hype words, no exclamation marks, no emoji. At most one hashtag, #gamedev, at the end.
-- Under 230 characters. Do not include any link; one is added after your text.
-- Reply with the post text and nothing else.`;
-
-async function claudePost(pr) {
+// Asks Claude for a post. `register` is 'diary' or 'radio' (voice.md), `brief`
+// says what this post is for, `material` is what it may draw on, and
+// `recent` is what the account said lately, so it does not repeat itself.
+export async function claudeWrite({ register, brief, material, recent = [] }) {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic();
+  const lately = recent.length
+    ? `\n\nRecent posts from the account. Do not repeat their openings, jokes or topics:\n${recent.map((r) => `---\n${r}`).join('\n')}`
+    : '';
   const response = await client.beta.messages.create({
     model: 'claude-opus-5-5',
     max_tokens: 16000,
-    output_config: { effort: 'low' },
+    output_config: { effort: 'medium' },
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    system: SYSTEM,
+    system: VOICE,
     messages: [{
       role: 'user',
-      content: `Title: ${pr.title}\n\nDescription:\n${pr.body || '(none)'}`,
+      content: `Write one ${register} post.\n\n${brief}\n\nMaterial:\n${material}${lately}`,
     }],
   });
   if (response.stop_reason === 'refusal') throw new Error('Claude declined to write the post');
@@ -74,12 +76,23 @@ async function claudePost(pr) {
   return text;
 }
 
-export async function draftPost(pr, link) {
+// The text with its link, or null if Claude could not fit it into a post.
+export function withLink(text, link) {
+  const post = link ? `${text}\n\n${link}` : text;
+  return postLength(post) <= LIMIT ? post : null;
+}
+
+export async function draftPost(pr, link, recent = []) {
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      const text = `${await claudePost(pr)}\n\n${link}`;
-      if (postLength(text) <= LIMIT) return { text, by: 'claude' };
-      console.warn(`Claude's post was ${postLength(text)} characters; using the template`);
+      const text = withLink(await claudeWrite({
+        register: 'diary',
+        brief: 'A pull request was just merged. Say what changed in the game, as a player would notice it. If the change is only internal, say what it makes possible or better.',
+        material: `Title: ${pr.title}\n\nDescription:\n${pr.body || '(none)'}`,
+        recent,
+      }), link);
+      if (text) return { text, by: 'claude' };
+      console.warn("Claude's post came back too long; using the template");
     } catch (err) {
       console.warn(`Claude could not draft the post (${err.message}); using the template`);
     }
