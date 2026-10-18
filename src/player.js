@@ -144,6 +144,23 @@ const MANTLE_PER_M = 0.22;     // plus this per metre climbed
  * exactly the jolt you feel at the top of a climb. The quintic is zero in
  * both derivatives at 0 and 1.
  */
+/**
+ * A slide: crouch out of a sprint and you go down on one hip and keep going.
+ * `min` is the speed it takes to start one, `boost` what it starts at over
+ * the speed you had, `end` what it bleeds down to over `dur` (and `fall`
+ * how it bleeds: over one, most of the speed goes early), `eye` how low
+ * the view goes, `rest` how long before the next.
+ */
+export const SLIDE = { min: 6.4, boost: 1.35, end: 4.2, fall: 1.3, dur: 0.9, eye: 0.82, rest: 0.55, stamina: 0.1 };
+/**
+ * A lean: hold Q or E and the head goes out past the corner while the feet
+ * stay behind it. `hold` is how long a key is held before it leans, so a tap
+ * still cycles a weapon or works a door; `side` how far the head goes, `dip`
+ * how far it drops, `roll` the tilt of the view, `slow` the walking speed
+ * lost at full lean.
+ */
+export const LEAN = { hold: 0.16, side: 0.48, dip: 0.07, roll: 0.12, slow: 0.45, margin: 0.14 };
+
 const smoother = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 /** A 0 → 1 → 0 hump with no corner at the peak. */
 const hump = (t) => Math.sin(Math.min(1, Math.max(0, t)) * Math.PI);
@@ -159,8 +176,17 @@ export class Player {
     this.recoilPitch = 0;
     this.recoilYaw = 0;
     this.radius = 0.42;
+    this.leanOffset = new THREE.Vector3();
+    this._head = new THREE.Vector3();
     this.reset(0, 0);
   }
+
+  /**
+   * Where the head is: the eye, plus a lean. What a hostile looks for and
+   * shoots at, because leaning round a corner puts the head out where the
+   * body is not, and a body hidden behind it must not hide the head.
+   */
+  get head() { return this._head.copy(this.position).add(this.leanOffset); }
 
   reset(x, z) {
     // on whatever floor is underfoot: most of the sector is pavement, and the
@@ -187,6 +213,14 @@ export class Player {
     this.shake = 0;
     this.mantle = null;
     this.climbLean = 0;
+    this.slide = null;
+    this.slideRest = 0;
+    this.slides = 0;
+    this.crouchHeld = false;
+    this.lean = 0;
+    this.leanReach = 1;
+    this.leanHeld = { KeyQ: 0, KeyE: 0 };
+    this.leanOffset.set(0, 0, 0);
   }
 
   applyRecoil(v, h) {
@@ -236,6 +270,9 @@ export class Player {
     this.recoilYaw = THREE.MathUtils.damp(this.recoilYaw, 0, 6, dt);
 
     if (this.dead) {
+      this.lean = 0;
+      this.leanOffset.set(0, 0, 0);
+      this.slide = null;
       this.eyeHeight = THREE.MathUtils.damp(this.eyeHeight, 0.35, 4, dt);
       this.position.y = this.feetY + this.eyeHeight;
       this.camera.position.copy(this.position);
@@ -258,7 +295,30 @@ export class Player {
     if (input.down('KeyD')) ix += 1;
     const moving = ix !== 0 || iz !== 0;
 
-    this.crouching = input.down('ControlLeft') || input.down('ControlRight') || input.down('KeyC');
+    const crouchKey = input.down('ControlLeft') || input.down('ControlRight') || input.down('KeyC');
+    const crouchPressed = crouchKey && !this.crouchHeld;
+    this.crouchHeld = crouchKey;
+    this.slideRest = Math.max(0, this.slideRest - dt);
+    // Crouch out of a sprint and you slide, on what you were already doing:
+    // the sprint is last frame's, so the slide starts at the speed it had.
+    const was = Math.hypot(this.velocity.x, this.velocity.z);
+    if (!this.slide && crouchPressed && this.sprinting && this.onGround && was > SLIDE.min
+        && this.slideRest <= 0 && this.stamina > SLIDE.stamina) {
+      this.slide = { t: 0, dx: this.velocity.x / was, dz: this.velocity.z / was, v0: was * SLIDE.boost };
+      this.slides++;
+      this.stamina -= SLIDE.stamina;
+      if (this.onSlide) this.onSlide();
+    }
+    this.crouching = crouchKey || !!this.slide;
+
+    // A lean waits for its key to be held, so a tap is still a tap: Q cycles
+    // the weapon and E works a door, on release (`Game.bindUI`).
+    for (const k in this.leanHeld) this.leanHeld[k] = input.down(k) ? this.leanHeld[k] + dt : 0;
+    const leanWant = (this.leanHeld.KeyE >= LEAN.hold ? 1 : 0) - (this.leanHeld.KeyQ >= LEAN.hold ? 1 : 0);
+    const canLean = !this.slide && !this.sprinting && this.onGround;
+    this.lean = THREE.MathUtils.damp(this.lean, canLean ? leanWant : 0, 10, dt);
+    if (Math.abs(this.lean) < 1e-3) this.lean = 0;
+
     // firing or aiming drops you out of a sprint
     const wantSprint = (input.down('ShiftLeft') || input.down('ShiftRight'))
       && iz < 0 && !this.crouching && !input.aim && !input.fire;
@@ -278,6 +338,7 @@ export class Player {
     if (this.crouching) speed = 2.6;
     if (input.aim && !this.sprinting) speed *= 0.55;
     if (!this.onGround) speed *= 0.92;
+    speed *= 1 - LEAN.slow * Math.abs(this.lean);
 
     // ---- horizontal movement -------------------------------------------
     // camera forward is (-sin yaw, -cos yaw); right is (cos yaw, -sin yaw)
@@ -291,8 +352,18 @@ export class Player {
     }
     const target = TARGET.set(wx * speed, 0, wz * speed);
     const accel = this.onGround ? 14 : 3.5;
-    this.velocity.x = THREE.MathUtils.damp(this.velocity.x, target.x, accel, dt);
-    this.velocity.z = THREE.MathUtils.damp(this.velocity.z, target.z, accel, dt);
+    if (this.slide) {
+      // the way it started, bleeding speed off: no steering on a hip
+      const s = this.slide;
+      s.t += dt;
+      const k = Math.min(1, s.t / SLIDE.dur);
+      const v = SLIDE.end + (s.v0 - SLIDE.end) * Math.pow(1 - k, SLIDE.fall);
+      this.velocity.x = s.dx * v;
+      this.velocity.z = s.dz * v;
+    } else {
+      this.velocity.x = THREE.MathUtils.damp(this.velocity.x, target.x, accel, dt);
+      this.velocity.z = THREE.MathUtils.damp(this.velocity.z, target.z, accel, dt);
+    }
 
     // ---- mantle ----------------------------------------------------------
     // Jump into a waist-to-chest ledge and you climb it instead of bouncing
@@ -322,10 +393,23 @@ export class Player {
 
     // Move horizontally first. Anything no taller than a step above the feet
     // is walkable, so it does not block — the support check below lifts you.
+    const px = this.position.x, pz = this.position.z;
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
     this.world.resolve(this.position, this.radius, this.feetY, STEP_HEIGHT, BODY_HEIGHT);
     this.world.clampToBounds(this.position, this.radius);
+    // A slide into something stops at it, with the speed it has left: the
+    // velocity a slide sets is not damped, so without this it would keep
+    // shoving into a wall for the rest of its duration.
+    if (this.slide) {
+      const moved = Math.hypot(this.position.x - px, this.position.z - pz);
+      const meant = Math.hypot(this.velocity.x, this.velocity.z) * dt;
+      if (this.slide.t > 0.05 && moved < meant * 0.4) {
+        this.velocity.x = (this.position.x - px) / dt;
+        this.velocity.z = (this.position.z - pz) / dt;
+        this._endSlide();
+      }
+    }
 
     // ---- footing ---------------------------------------------------------
     // Footing asks how much floor is under the feet, not how wide the body
@@ -358,20 +442,25 @@ export class Player {
       // walked off an edge
       this.onGround = false;
     }
+    // a slide ends in the air (a jump out of it keeps the speed), or when it
+    // has run its length
+    if (this.slide && (!this.onGround || this.slide.t >= SLIDE.dur)) this._endSlide();
 
     // ---- view height, bob ----------------------------------------------
-    const wantEye = this.crouching ? EYE_CROUCH : EYE_STAND;
-    this.eyeHeight = THREE.MathUtils.damp(this.eyeHeight, wantEye, 12, dt);
+    const wantEye = this.slide ? SLIDE.eye : this.crouching ? EYE_CROUCH : EYE_STAND;
+    this.eyeHeight = THREE.MathUtils.damp(this.eyeHeight, wantEye, this.slide ? 10 : 12, dt);
+    this.slideTilt = THREE.MathUtils.damp(this.slideTilt || 0, this.slide ? 1 : 0, 10, dt);
 
     const hSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     this.bobPhase += dt * (hSpeed * 1.6 + 1);
-    const bob = this.onGround ? Math.sin(this.bobPhase * 2) * 0.022 * Math.min(hSpeed / 6, 1) : 0;
-    const roll = Math.sin(this.bobPhase) * 0.006 * Math.min(hSpeed / 6, 1);
+    const bob = this.onGround && !this.slide ? Math.sin(this.bobPhase * 2) * 0.022 * Math.min(hSpeed / 6, 1) : 0;
+    const roll = Math.sin(this.bobPhase) * 0.006 * Math.min(hSpeed / 6, 1) + this.slideTilt * 0.05;
 
     this.position.y = this.feetY + this.eyeHeight + bob;
+    this._placeLean(dt);
 
-    // footsteps
-    if (this.onGround && hSpeed > 1.5) {
+    // footsteps, which a slide has none of
+    if (this.onGround && hSpeed > 1.5 && !this.slide) {
       this.stepTimer -= dt * hSpeed;
       if (this.stepTimer <= 0) {
         this.stepTimer = 4.2;
@@ -400,12 +489,48 @@ export class Player {
     // the climb hands control back.
     const lean = this.climbLean;
 
-    this.camera.position.copy(this.position);
+    this.camera.position.copy(this.position).add(this.leanOffset);
     this.camera.position.y += trauma * (Math.random() - 0.5) * 0.06;
     this.camera.rotation.set(
       this.pitch + this.recoilPitch + sy - lean * 0.1,
       this.yaw + this.recoilYaw + sx,
-      roll + sr + lean * 0.06, 'YXZ');
+      roll + sr + lean * 0.06 - this.lean * this.leanReach * LEAN.roll, 'YXZ');
+  }
+
+  _endSlide() {
+    this.slide = null;
+    this.slideRest = SLIDE.rest;
+  }
+
+  /**
+   * Put the head out to the side the lean asks for, as far as it goes before
+   * it meets something. The way out is traced from the eye, so a lean
+   * against a wall goes nowhere and a lean at a corner stops at the corner's
+   * far side less a margin — the head is never inside a wall, and never past
+   * one. It is pulled in at once and let out smoothly, so turning into a
+   * wall does not push the view through it for a frame.
+   */
+  _placeLean(dt) {
+    const L = this.lean;
+    if (L === 0) { this.leanOffset.set(0, 0, 0); this.leanReach = 1; return; }
+    const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+    const side = L * LEAN.side, s = Math.sign(L), p = this.position;
+    const dip = LEAN.dip * L * L;
+    const clear = (k) => this.world.lineOfSight(p.x, p.y, p.z,
+      p.x + rx * (side * k + s * LEAN.margin), p.y - dip * k, p.z + rz * (side * k + s * LEAN.margin));
+    let f = 1;
+    if (!clear(1)) {
+      let lo = 0, hi = 1;
+      if (!clear(0)) hi = 0;
+      for (let i = 0; i < 6 && hi > 0; i++) {
+        const mid = (lo + hi) / 2;
+        if (clear(mid)) lo = mid; else hi = mid;
+      }
+      f = lo;
+    }
+    this.leanReach = f < this.leanReach ? f : THREE.MathUtils.damp(this.leanReach, f, 12, dt);
+    const k = this.leanReach;
+    this.leanOffset.set(rx * side * k, -dip * k, rz * side * k);
   }
 
   /**
@@ -472,6 +597,9 @@ export class Player {
     this.stamina = Math.max(0, this.stamina - 0.12);
     this.velocity.set(0, 0, 0);
     this.onGround = false;
+    // both hands on the ledge: nothing leans through a climb
+    this.lean = 0;
+    this.leanOffset.set(0, 0, 0);
     if (this.onMantle) this.onMantle();
     return true;
   }

@@ -1869,10 +1869,21 @@ function bakeStatic(group, world) {
   // `reserve` it was built in. The clones are made in a reserve now and the
   // bill is a UUID for each mesh but those marked `unbilled` — what the city
   // cost before they existed.
+  //
+  // A mesh marked `unbaked` — a fire barrel, which can be blown up — is
+  // shaded and billed like any other and then handed back its own shaded
+  // geometry in its own frame, and left standing in the scene: a drum merged
+  // into a batch could never be shown burst.
+  const inv = new THREE.Matrix4();
   reserve(() => {
     for (const m of meshes) {
       const geo = m.geometry.clone().applyMatrix4(m.matrixWorld);
       shadeGeometry(geo, m.userData.tint || [1, 1, 1], occlusion, m.userData.mottle || 0, indoors, !!m.userData.keepShade);
+      if (m.userData.unbaked) {
+        materialIndex(perMaterial, m.material);
+        m.geometry = geo.applyMatrix4(inv.copy(m.matrixWorld).invert());
+        continue;
+      }
       const key = `${materialIndex(perMaterial, m.material)}:${patchOf(geo)}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, b = { material: m.material, geos: [], cast: false, receive: false });
@@ -1885,6 +1896,7 @@ function bakeStatic(group, world) {
 
   // nothing updates a detached mesh's matrix, so freeze it at what it was
   for (const m of meshes) {
+    if (m.userData.unbaked) continue;
     m.matrixAutoUpdate = false;
     m.removeFromParent();
   }
@@ -5576,8 +5588,12 @@ export function buildCity(scene, painted = null) {
     drum.userData.tint = tintAt(x, z, 2, 0.16);
     drum.position.set(x, 0, z);
     drum.castShadow = true;
+    // it can be blown up, so it is shaded by the bake and left out of the
+    // merge: a drum merged into a batch could never be shown burst
+    drum.userData.unbaked = true;
     g.add(drum);
     w.addBox(x - 0.45, z - 0.45, x + 0.45, z + 0.45, 1.05);
+    const box = w.boxes[w.boxes.length - 1];
 
     const light = new THREE.PointLight(0xff7a26, 2.4, 14, 2);
     light.position.set(x, 1.5, z);
@@ -5591,7 +5607,9 @@ export function buildCity(scene, painted = null) {
     flame.position.set(x, 1.35, z);
     g.add(flame);
 
-    return { light, flame, base: 2.4, phase: Math.random() * 10 };
+    // `settle` moves the drum and its box together, so where the barrel is
+    // is read off the drum once it has been put down
+    return { light, flame, base: 2.4, phase: Math.random() * 10, drum, box };
   }
 
   function rubblePile(g, x, z, conc, scale = 1) {

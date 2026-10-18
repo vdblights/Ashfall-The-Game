@@ -64,6 +64,8 @@ builds, never to play.
 | `src/armoury.js` | What a run can buy between waves, what each tier does, and the screen it is bought on |
 | `src/drops.js` | What a hostile drops: the ammunition can, medical case and grenade, and their halos |
 | `src/grenades.js` | Fuse, flight, bounce, detonation |
+| `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
+| `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
 | `src/textures.js` | Every texture, painted to canvas at boot |
 | `src/shapes.js` | Chamfers, lofts, side profiles, lathes, creased normals, merging — the shapes that are not boxes |
@@ -928,6 +930,72 @@ These each cost real debugging time. Changing them needs a reason.
   slabs' new poses did, by three more cleared on seed 1. Every heap pays it
   now, and the copy is made in a `reserve`. Proved by the old poses under
   the new bill: three fewer slabs cleared and the same three marks.
+- **A fire barrel is shot, not baked, and costs the seed nothing.** Every
+  lit drum was a collider, a light and a flame, and no raycast target, so a
+  round went straight through it. `barrels.js` makes each one a target of
+  its own (`Barrels.meshes`, read by `hitscan` beside `world.solids`): rounds
+  take `hp` off it (`BARREL.hp`, two pistol rounds), it roars and hisses for
+  `fuse`, and it blows through `Game.explode` with a quarter more reach than a
+  frag (`BARREL.reach`), hurting every side. Owner `'barrel'` credits the
+  player with what it kills (the killfeed says BARREL); `'barrel-hostile'`,
+  a drum set off by a hostile's frag, credits nobody. A blast that reaches a
+  lit drum and can see its top arms it a beat later for every metre between
+  them (`blast`), so a frag beside a drum is a bigger frag and two drums in
+  reach are a fuse. Five things keep it honest. **The drum is left out of
+  the merge, not out of the bake** (`unbaked` in `bakeStatic`): it is shaded
+  and billed like every mesh, registers its material so the batch bill is
+  the same, and is handed back its own shaded geometry in its own frame, so
+  the mark after boot is unchanged. **It is not in `world.solids`**, so the
+  layout check's solid counts are untouched. **What it leaves is the box it
+  had, cut down**: its `top` goes to the stump's 0.27 m — a step you walk
+  over — and its min/max never moves, because `World.seal` indexes them.
+  **Its light stays in the pool at nothing**, sorted last, because the count
+  of visible point lights is in every lit program's key. **Its burn is
+  vertex colour**, its own geometry's scaled toward black and put back on a
+  new run, so no material is swapped and nothing compiles mid-fight. On seed
+  1 the 23 drums are a lot apart, never two in one blast's reach, so the
+  check sets one off with a frag. `a fire barrel blows when it is shot` fails
+  with the drums not raycast (a round leaves the drum at 40), the blast seeing no drum (a frag beside one arms nothing),
+  the kill not credited (0 kills), and the stump's collider left standing (1.05 m).
+- **A pane is glass and nothing else.** About 45% of shop and floor windows
+  hold their pane (`GLASS.share`, a hash of where each is; 337 of 706 on
+  seed 1). It is in neither collision list and no reader of the world knows
+  it: a sight line, a round, a grenade and the route field go through a
+  window as they always did, which keeps every window check true. It only
+  breaks — under a round passing it before whatever the round stops at
+  (`alongRay` from `hitscan`), a blast that can see its face (`blast`), a body
+  pushing through (`touch`, every step, the player and every hostile), and a
+  hostile's shot through it, so a marksman at a window breaks its pane with
+  its first round. Every pane is an instance of one `InstancedMesh` and every
+  shard of another, built in a `reserve` after the city and never baked: two
+  draw calls, and a shard's scatter comes from a generator of its own.
+  A shard is told where it will land when it is thrown, and asks the floor
+  again where it actually comes down, from where it was a frame before — an
+  upstairs pane blown out lands in the street, not on the floor it fell from.
+  `a pane goes when a round, a blast or a body goes through it` fails with
+  rounds not asking (0 of 12 broken), a blast blind to walls (a pane past one broken), bodies not
+  asking (0 of 4 pull-ups), hostile shots not asking (0 of 3) and shards left on the
+  guess (0.95 m off their floor).
+- **A slide is a sprint's own speed, and a lean moves the head, not the
+  body.** Crouch out of a sprint on the ground and `Player.slide` carries you
+  along the way you were going at 1.35x the speed (`SLIDE`), bleeding to
+  4.2 m/s over 0.9 s, the eye down to 0.82 m; a jump out of it keeps the
+  speed. Its velocity is set, not damped toward a target, so a slide into a
+  wall would push into it for the rest of its duration: it ends the frame
+  `resolve` takes more than 60% of its step away. A lean is `Q` or `E` held
+  past `LEAN.hold` (0.16 s): the head goes 0.48 m out with a roll and a dip,
+  as far as a sight line from the eye reaches with a margin (`_placeLean`),
+  pulled in at once and let out smoothly, and walking slows. A tap still does
+  what the key did (cycle the weapon, work a door), on release
+  (`input.onKeyUp`), because a key held long enough to lean did not tap.
+  **`Player.head` is what a hostile looks for and shoots at** — its sight
+  line, its shot, the marksman's laser, its reload cover and the watchdog's
+  "can the player see it" — or a lean round a corner would see out and not
+  be seen back. Routes, ranges and the blast still read the body. `crouch
+  out of a sprint and you slide` fails with no slide (peak 7.0 m/s against a sprint's 8.2), a slide that
+  ignores walls (2 of 2 kept pushing) and an eye that drops at once (0.42 m in a frame); `a lean puts
+  the head round a corner` fails with hostiles reading the body (0 of 2 leaning heads shot), the
+  lean unclamped (6 of 6 heads in the wall) and Q cycling on the key going down (a tap cycles twice, a hold once).
 - **Line of sight must stay symmetric.** It is a three-slab segment test. An
   earlier version only checked height at the entry point, which let a hostile
   see a target that could not see it back.
@@ -2307,6 +2375,20 @@ the fountain's rim: one place measured eight times, beside the plaza's
 barricades. It takes one deck per place now (4 m apart). The same thing
 can happen to anything that samples by index.
 
+A corner is not a corner until what is round it has been looked at. The
+lean check first stood the player at the south-east corner of the first
+tall box it found and put a raider ten metres round it, and failed three
+ways that were all the setup: the box was a 20 cm wall with a building
+behind it, the next building stood a metre off across an alley and hid the
+raider from anywhere, and standing 0.35 m short of the edge put the leaned
+head 12 cm past it, where a second container stood. It now tries every
+corner of every block and container both ways round, and only counts one
+where the target is in plain view from a quarter-metre past the edge —
+which is the premise of a peek, asked the way `__place` asks a firing line.
+And `groundHeight` with a low ceiling does not see anything taller than
+the ceiling, so a "clear run of road" asked of it alone ran into a
+streetlight; ask `blocked` too.
+
 ## Performance
 
 Shadow mapping dominates — roughly 8x the rest of the scene combined. Quality
@@ -2416,6 +2498,24 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the crowded lots was asked as "what's next to make this
+cool?", and the answer taken was four things a fight feels rather than
+sees: fire barrels that blow, glass that breaks, a slide and a lean. Each
+is an invariant above, and they share one shape worth keeping: none of
+them is a new reader of the world. A blown drum is the box it was with its
+`top` cut; a pane is in no collision list; a slide is velocity and a lean
+is a camera offset, and the only reader that had to learn anything is the
+hostiles' sight, which reads `Player.head`. So the layout, the solids, the
+perches and the mark after boot are unchanged on all three pinned seeds,
+and the layout check did not move. What it cost, seed 1 under software
+rendering against `main`, three views on each tier: draw calls +14-16 on
+high and +8-9 on low (the 23 drums out of the merge, the panes and the
+shards), triangles within 1%, frame time within noise (high 4,268-4,515
+against 4,293-4,502 ms, low 585-631 against 521-625). Barrels sit a lot
+apart on every pinned seed, so a chain of them is something a frag does
+beside one, not something a street of them does; clustering them would be
+a layout change, and is on the list.
 
 The pass after the ramps took the item it left on the list: a rubble
 lot's slabs are laid clear of each other and of the lot's container
@@ -3744,6 +3844,16 @@ Suggested next work, in the order I would do it:
    scrip) are first guesses against about 1,500 points a wave early on.
    Whether a run can afford the plate carrier before wave 4, and whether
    anyone buys optics, is a play question.
+3. **Put some fire barrels in reach of each other.** A barrel's blast sets
+   off any lit drum it can see within 8.75 m, but `fireBarrel` lays one a
+   lot, about 34 m apart, so on the pinned seeds no blast ever reaches a
+   second drum. A cluster of two or three — a fuel dump of the city's own
+   — would make a street a trap. It moves the layout, so it wants the
+   layout check re-measured with the reason, and the drums paid for with
+   `spend` like every prop.
+4. **Tune the slide and the lean against play.** `SLIDE` and `LEAN` are
+   first guesses: whether a slide should outrun a sprint for longer, and
+   whether half a metre of lean is too much head for a hostile to miss.
 
 One piece of housekeeping that cannot be done from here: the merged branch
 `claude/project-memory` still exists on the remote. Deleting it returns 403

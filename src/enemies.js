@@ -1563,10 +1563,13 @@ export class Enemy {
     toPlayer.normalize();
     const heightGap = player.position.y - (this.pos.y + 1.5);
 
-    // a hostile down behind cover is looking from where its eyes are
+    // A hostile down behind cover is looking from where its eyes are, and
+    // what it looks for is the player's head: leaning round a corner puts
+    // the head out where the body is not (`Player.head`).
     const eyeY = this.pos.y + (1.5 - CROUCH.drop * this.crouch - this.stoop) * this.type.scale;
+    const H = player.head;
     const sees = dist < this.type.detect &&
-      world.lineOfSight(this.pos.x, eyeY, this.pos.z, player.position.x, player.position.y, player.position.z);
+      world.lineOfSight(this.pos.x, eyeY, this.pos.z, H.x, H.y, H.z);
 
     // spotted the target, or got close enough to hear them
     if (!this.alerted && ((sees && dist < this.type.detect) || dist < 16)) this.alert(time);
@@ -1790,7 +1793,7 @@ export class Enemy {
       // reads as a bug to the person watching it — which is why the last
       // guard is line of sight: never teleport one the player can see.
       if (this.noProgress >= (onPerch && !parked ? 24 : 12) &&
-          !(sees || world.lineOfSight(player.position.x, player.position.y, player.position.z,
+          !(sees || world.lineOfSight(player.head.x, player.head.y, player.head.z,
             this.pos.x, this.pos.y + 1.3 * this.type.scale, this.pos.z))) {
         this.game.relocateEnemy(this);
         this.noProgress = 0;
@@ -1927,7 +1930,7 @@ export class Enemy {
     this.reloadT = t.reload;
     this.reloadCue = 0;
     this.burstLeft = 0;
-    const s = t.scale, p = player.position;
+    const s = t.scale, p = player.head;
     const standing = world.lineOfSight(p.x, p.y, p.z, this.pos.x, this.pos.y + 1.25 * s, this.pos.z);
     const crouched = world.lineOfSight(p.x, p.y, p.z, this.pos.x, this.pos.y + (1.25 - CROUCH.drop) * s, this.pos.z);
     this.crouchWant = standing && !crouched;
@@ -1962,8 +1965,9 @@ export class Enemy {
     const t = this.type;
     const muzzle = V3;
     this.parts.muzzle.getWorldPosition(muzzle);
-    const dist = muzzle.distanceTo(player.position);
-    const toPlayer = V4.copy(player.position).sub(muzzle).normalize();
+    const head = player.head;
+    const dist = muzzle.distanceTo(head);
+    const toPlayer = V4.copy(head).sub(muzzle).normalize();
 
     const shots = t.pellets || 1;
     let hits = 0;
@@ -1981,6 +1985,9 @@ export class Enemy {
       this.game.effects.tracer(muzzle, V1.copy(muzzle).addScaledVector(dir, Math.min(dist + 2, 70)), 0.8);
     }
 
+    // a pane between it and you goes with the first shot: a marksman behind
+    // a window is heard and seen before the round lands
+    this.game.glass?.alongRay(muzzle, toPlayer, dist);
     this.game.effects.muzzle(muzzle, t.pellets ? 1.4 : 0.9);
     this.kick = Math.min(1.5, this.kick + (t.pellets ? 1.3 : 0.8));
     audio.shot(t.sound || 'rifle', THREE.MathUtils.clamp(14 / Math.max(3, dist), 0.16, 1), muzzle);
@@ -2008,9 +2015,9 @@ export class Enemy {
     // position is parent-local, but lookAt takes a world-space target, and
     // the length has to be divided out of the parent's scale
     beam.position.copy(beam.parent.worldToLocal(V4.copy(V3)));
-    beam.lookAt(player.position);
+    beam.lookAt(player.head);
     const scale = this.group.scale.x || 1;
-    beam.scale.set(1 / scale, 1 / scale, V3.distanceTo(player.position) / scale);
+    beam.scale.set(1 / scale, 1 / scale, V3.distanceTo(player.head) / scale);
     // pulses harder as the shot approaches
     beam.material.opacity = 0.25 + 0.5 * (1 - Math.max(0, (this.nextFire - time) / 1.1));
   }

@@ -126,15 +126,16 @@ scale had no initial value.
 | --- | --- |
 | `W` `A` `S` `D` | Move |
 | `Shift` | Sprint (drops when you fire or aim) |
-| `Ctrl` / `C` | Crouch — tighter spread |
+| `Ctrl` / `C` | Crouch — tighter spread. Out of a sprint, a **slide** |
 | `Space` | Jump — held against a ledge, mantle onto it (~1.8 m from the ground, ~2.6 m off a jump) |
 | Left mouse | Fire |
 | Right mouse | Aim down sights |
 | `R` | Reload |
-| `1`–`4`, `Q`, mouse wheel | Switch weapons |
+| `1`–`4`, `Q` (tap), mouse wheel | Switch weapons |
+| `Q` / `E` (hold) | Lean left / right round a corner |
 | `G` | Frag grenade — **hold to cook**, release to throw |
 | `F` / `V` | Melee bash |
-| `E` | Open or close a door in front of you |
+| `E` (tap) | Open or close a door in front of you |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
@@ -680,6 +681,31 @@ hides you; it does not hold anything out. A hostile that walks up to a shut
 door opens it and comes through, so shutting yourself in buys you a moment
 of not being seen and the sound of it opening.
 
+The fire barrels burning in the streets go up. Two pistol rounds or one
+from the shotgun hole a drum, it roars for half a second, and then it blows
+with a frag's force and a quarter more reach: whatever is standing by it,
+hostile or you, takes the blast, and a kill is yours if you set it off. A
+frag or another drum's blast that can see a lit drum sets it off a beat
+later. What is left is a crushed, burnt stump you step over, smoking for half
+a minute.
+
+About half the windows still have glass in them — in the shops and up the
+floors. A pane is no cover and stops nothing: a round, a sight line and a
+grenade go through a window exactly as through an empty one. It only breaks:
+under a round passing through it, a blast that reaches it, a body climbing
+through it, or a hostile's first shot from behind it, so a marksman at a
+window gives itself away with the sound of glass going. The shards fall to the
+floor under them and lie there a while.
+
+Crouch out of a sprint and you slide: down to knee height, faster than the
+sprint for a moment and bleeding off over most of a second, and a jump out
+of it keeps the speed. A slide into a wall stops at the wall. Hold `Q` or `E`
+to lean: the head goes out about half a metre past a corner while the body
+stays behind it, and never into a wall. A tap of either still does what it
+did — cycle the weapon, work a door. Leaning works both ways: a hostile
+looks for your head, so a head out past a corner is a head it can see and
+shoot.
+
 ## How it is put together
 
 ```
@@ -694,6 +720,8 @@ src/enemies.js      hostile archetypes, AI, procedural bodies
 src/objectives.js   objective sites, channels, stages, the cast they put on the map
 src/story.js        Operation ASHFALL: the briefing, the acts, the plan, the radio
 src/grenades.js     thrown frags: fuse, bounce physics, detonation
+src/barrels.js      fire barrels: shot, fused, blown, chained, left a stump
+src/glass.js        the panes still in the windows, and their shards
 src/effects.js      pooled tracers, impacts, blood, casings, explosions
 src/textures.js     canvas-painted textures (asphalt, facades, rust, cloth, sky)
 src/shapes.js       chamfers, lofts, side profiles, lathes, creased normals, merging

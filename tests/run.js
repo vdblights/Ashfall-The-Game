@@ -382,6 +382,291 @@ check('a cooked frag detonates in hand', async (page) => {
   return r;
 });
 
+check('a fire barrel blows when it is shot or a blast reaches it, and burns down to a stump', async (page) => {
+  // Every lit drum was scenery: a collider and a light, and not a raycast
+  // target, so a round went through it. Now a drum takes rounds and blows
+  // through `Game.explode`, crediting the player with what it kills, and a
+  // blast that sees another lit drum sets that one off a beat later.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, W = g.world, p = g.player, B = g.barrels;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; g.waveHpScale = 1;
+    const tick = (s) => window.__step(s);
+    const out = { barrels: B.list.length };
+    const lights = () => g.fireBarrels.filter((b) => b.light.visible).length;
+    g.placeFireLights(true);
+    out.lights = [lights()];
+
+    // the drum with a clear 10 m shot at it and no other drum in reach, so
+    // its blast is its own
+    let b = null, spot = null;
+    for (const c of B.list) {
+      if (B.list.some((o) => o !== c && Math.hypot(o.x - c.x, o.z - c.z) < 10)) continue;
+      for (let k = 0; k < 16 && !spot; k++) {
+        const a = (k / 16) * Math.PI * 2, x = c.x + Math.cos(a) * 10, z = c.z + Math.sin(a) * 10;
+        if (Math.abs(x) > W.bounds - 2 || Math.abs(z) > W.bounds - 2) continue;
+        if (W.groundHeight(x, z, 0.12, 0.6) > 0.5 || W.blocked(x, z, 0.6, 0.3)) continue;
+        if (!W.lineOfSight(x, 1.9, z, c.x, c.y + 1.2, c.z)) continue;
+        spot = { x, z }; b = c;
+      }
+      if (b) break;
+    }
+    out.found = !!b;
+    if (!b) return out;
+    p.reset(spot.x, spot.z);
+    tick(0.05);
+    const def = { ...g.weapons.def, spread: 0, adsSpread: 0 };
+    const shoot = () => {
+      g.camera.position.copy(p.position);
+      g.hitscan(new THREE.Vector3(b.x, b.y + 0.85, b.z).sub(g.camera.position).normalize(), def);
+    };
+    // a scavenger beside it, which the blast is for
+    const e = g.spawnEnemy('scavenger');
+    const side = Math.atan2(spot.z - b.z, spot.x - b.x) + Math.PI / 2;
+    e.pos.set(b.x + Math.cos(side) * 2.4, b.y, b.z + Math.sin(side) * 2.4);
+    e.group.position.copy(e.pos);
+    e.nextFire = 1e9;
+    e.update = () => {};                 // stands where it was put
+    const kills = g.kills, labels = [];
+    const kill = g.hud.kill.bind(g.hud);
+    g.hud.kill = (t, w, h) => { labels.push(w); kill(t, w, h); };
+
+    shoot();
+    out.oneRound = { hp: b.hp, armed: b.fuse >= 0 };
+    shoot();
+    out.twoRounds = { hp: b.hp, armed: b.fuse >= 0 };
+    tick(0.25);
+    out.fusing = !b.burst;
+    tick(0.4);
+    out.burst = b.burst;
+    out.stump = +(b.box.top - b.y).toFixed(3);
+    // walked over, and a round at knee height goes over it
+    out.stepOver = +(W.groundHeight(b.x, b.z, 0.12, b.y + 0.55) - b.y).toFixed(3);
+    const ray = new THREE.Raycaster(new THREE.Vector3(b.x - 3, b.y + 0.6, b.z), new THREE.Vector3(1, 0, 0), 0, 6);
+    out.knee = ray.intersectObject(b.drum, false).length;
+    out.kills = g.kills - kills;
+    out.labels = labels;
+    out.alive = e.alive;
+    out.health = p.health;
+    out.flame = b.flame.visible;
+    out.light = b.light.intensity;
+    g.placeFireLights(true);
+    out.lights.push(lights());
+
+    // A blast that reaches a lit drum and can see it sets it off a beat
+    // later — another drum's, or a frag's, which is the same path — and one
+    // that cannot see it, past a wall, does not. Drums are a lot apart on
+    // most seeds, so the blast here is a frag's.
+    const R = 7 * 1.25;
+    const open = (x, z) => Math.abs(x) < W.bounds - 2 && Math.abs(z) < W.bounds - 2
+      && W.groundHeight(x, z, 0.12, 0.6) < 0.5 && !W.blocked(x, z, 0.4, 0.3);
+    let seen = null, hidden = null;
+    for (const c of B.list) {
+      if (c.burst) continue;
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
+        for (const d of [3.5, 5.5]) {
+          const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d, y = W.groundHeight(x, z, 0.12, 0.6) + 0.15;
+          if (!open(x, z)) continue;
+          const sees = W.lineOfSight(x, y + 0.5, z, c.x, c.y + 1.2, c.z);
+          if (sees && !seen) seen = { c, x, y, z, d };
+          if (!sees && !hidden && c !== seen?.c) hidden = { c, x, y, z, d };
+        }
+      }
+    }
+    out.blasts = { seen: !!seen, hidden: !!hidden };
+    p.reset(spot.x, spot.z);
+    if (seen) {
+      g.explode(new THREE.Vector3(seen.x, seen.y, seen.z), 'player');
+      out.chainNow = seen.c.burst;
+      out.chainArmed = seen.c.fuse >= 0;
+      tick(0.15 + seen.d * 0.04 + 0.2);
+      out.chain = seen.c.burst;
+    }
+    if (hidden) {
+      g.explode(new THREE.Vector3(hidden.x, hidden.y, hidden.z), 'player');
+      tick(0.8);
+      out.walled = hidden.c.burst || hidden.c.fuse >= 0;
+    }
+    p.health = 100;
+
+    // a new run puts every drum back
+    g.startRun();
+    out.reset = B.list.every((x) => !x.burst && x.flame.visible && Math.abs(x.box.top - x.y - 1.05) < 1e-6 && x.drum.scale.y === 1);
+    return out;
+  });
+  expect(r.found, 'no drum with a clear shot at it and none in reach');
+  expect(r.oneRound.hp < 40 && !r.oneRound.armed, `one round left the drum at ${r.oneRound.hp}, armed ${r.oneRound.armed}`);
+  expect(r.twoRounds.armed, 'two rounds did not set the drum off');
+  expect(r.fusing, 'the drum blew without a fuse to see it coming');
+  expect(r.burst, 'the drum never blew');
+  expect(Math.abs(r.stump - 0.273) < 0.01, `the stump's collider stands ${r.stump} m`);
+  expect(r.stepOver < 0.3, `the stump stands ${r.stepOver} m under the feet`);
+  expect(r.knee === 0, 'a round at knee height still meets the drum');
+  expect(!r.alive && r.kills === 1 && r.labels.includes('BARREL'), `the scavenger beside it: alive ${r.alive}, kills ${r.kills}, ${r.labels}`);
+  expect(r.health === 100, `the blast reached the player 10 m off (${r.health})`);
+  expect(!r.flame && r.light === 0, 'the fire is still alight');
+  expect(r.lights[0] === r.lights[1], `the point lights went ${r.lights[0]} → ${r.lights[1]}`);
+  expect(r.blasts.seen && r.blasts.hidden, `no blast spot found: ${JSON.stringify(r.blasts)}`);
+  expect(r.chainArmed && !r.chainNow && r.chain, `a frag beside a drum: armed ${r.chainArmed}, at once ${r.chainNow}, after ${r.chain}`);
+  expect(!r.walled, 'a blast past a wall set a drum off');
+  expect(r.reset, 'a new run did not put the drums back');
+  return r;
+});
+
+check('a pane goes when a round, a blast or a body goes through it, and stops none of them', async (page) => {
+  // A share of the shop and floor windows hold their pane. It breaks to a
+  // round passing through it, a blast that can see it, a body pushing
+  // through it and a hostile shooting through it — and is in neither
+  // collision list, so a window is the same hole to sight, rounds and the
+  // route field it always was.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, W = g.world, p = g.player, G = g.glass;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; g.waveHpScale = 1;
+    const tick = (s) => window.__step(s);
+    const windows = W.rooms.reduce((n, x) => n + x.windows.length, 0) + W.floors.reduce((n, x) => n + x.windows.length, 0);
+    const out = { panes: G.panes.length, shop: G.panes.filter((q) => q.kind === 'shop').length, windows };
+    out.listed = W.solids.includes(G.mesh) || W.boxes.some((b) => b.pane);
+    const open = (x, z) => Math.abs(x) < W.bounds - 2 && Math.abs(z) < W.bounds - 2
+      && W.groundHeight(x, z, 0.12, 0.6) < 0.5 && !W.blocked(x, z, 0.5, 0.3);
+    const def = { ...g.weapons.def, spread: 0, adsSpread: 0 };
+    const mid = (q) => new THREE.Vector3(q.x, (q.sill + q.head) / 2, q.z);
+
+    // shot through: a round at every shop pane from 6 m out
+    out.shot = { tried: 0, broke: 0, stopped: 0 };
+    for (const q of G.panes.filter((x) => x.kind === 'shop' && x.intact)) {
+      const x = q.x + q.nx * 6, z = q.z + q.nz * 6;
+      if (!open(x, z)) continue;
+      p.reset(x, z);
+      tick(1 / 60);
+      g.camera.position.copy(p.position);
+      const at = mid(q);
+      at.y = Math.min(q.head - 0.2, Math.max(q.sill + 0.2, p.position.y));
+      const dir = at.sub(g.camera.position).normalize();
+      // the round goes on past the pane to whatever it would have stopped at
+      const ray = new THREE.Raycaster(g.camera.position.clone(), dir, 0, 400);
+      const before = ray.intersectObjects(W.solids, false)[0];
+      out.shot.tried++;
+      g.hitscan(dir, def);
+      if (!q.intact) out.shot.broke++;
+      if (before && before.distance < 5.9) out.shot.stopped++;
+      if (out.shot.tried >= 12) break;
+    }
+    tick(2);
+    // every shard lies on the floor under it
+    let off = 0, landed = 0;
+    for (const s of G.shards) {
+      if (!s.landed) continue;
+      landed++;
+      off = Math.max(off, Math.abs(s.y - 0.004 - W.groundHeight(s.x, s.z, 0.12, s.y + 0.02)));
+    }
+    out.shards = { landed, off: +off.toFixed(4) };
+
+    // a blast that can see a pane breaks it; one past a wall does not
+    let seen = null, hidden = null;
+    for (const q of G.panes) {
+      if (!q.intact || (seen && hidden)) continue;
+      const c = mid(q);
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        for (const d of [3, 7]) {
+          const x = q.x + Math.cos(a) * d, z = q.z + Math.sin(a) * d;
+          if (!open(x, z)) continue;
+          const y = W.groundHeight(x, z, 0.12, 0.6) + 0.2;
+          if (Math.hypot(x - c.x, y - c.y, z - c.z) > 7 * 1.4 - 0.5) continue;
+          const side = Math.sign((x - q.x) * q.nx + (z - q.z) * q.nz) || 1;
+          const fx = q.x + q.nx * side * 0.3, fz = q.z + q.nz * side * 0.3;
+          const fy = Math.min(q.head - 0.1, Math.max(q.sill + 0.1, y));
+          const sees = W.lineOfSight(x, y + 0.4, z, fx, fy, fz)
+            || W.lineOfSight(x, y + 0.4, z, q.x - q.nx * side * 0.3, fy, q.z - q.nz * side * 0.3);
+          if (sees && !seen && d === 3 && side > 0) seen = { q, x, y, z };
+          if (!sees && !hidden) hidden = { q, x, y, z };
+        }
+      }
+    }
+    out.blast = { seen: !!seen, hidden: !!hidden };
+    if (hidden) {
+      p.reset(hidden.x + 60, hidden.z);
+      g.explode(new THREE.Vector3(hidden.x, hidden.y, hidden.z), 'player');
+      out.blast.walled = !hidden.q.intact;
+    }
+    if (seen) {
+      p.reset(seen.x + 60, seen.z);
+      g.explode(new THREE.Vector3(seen.x, seen.y, seen.z), 'player');
+      out.blast.broke = !seen.q.intact;
+    }
+    p.health = 100;
+
+    // a body through it: a pull-up through a shop window
+    out.body = { tried: 0, broke: 0 };
+    for (const q of G.panes.filter((x) => x.kind === 'shop' && x.intact)) {
+      const x = q.x + q.nx * 0.95, z = q.z + q.nz * 0.95;
+      if (!open(x, z)) continue;
+      p.reset(x, z);
+      p.yaw = Math.atan2(q.nx, q.nz);
+      p.stamina = 1;
+      g.input.keys.add('KeyW'); g.input.keys.add('Space');
+      tick(1.2);
+      g.input.keys.clear();
+      tick(0.2);
+      out.body.tried++;
+      if (!q.intact) out.body.broke++;
+      if (out.body.tried >= 4) break;
+    }
+
+    // a hostile's shot through it, from inside the shop at the street
+    out.hostile = { tried: 0, broke: 0 };
+    for (const q of G.panes.filter((x) => x.kind === 'shop' && x.intact)) {
+      const ix = q.x - q.nx * 2.5, iz = q.z - q.nz * 2.5, ox = q.x + q.nx * 9, oz = q.z + q.nz * 9;
+      if (!open(ox, oz) || W.blocked(ix, iz, 0.5, 0.6)) continue;
+      const room = W.rooms.find((m) => ix > m.minX && ix < m.maxX && iz > m.minZ && iz < m.maxZ);
+      if (!room) continue;
+      p.reset(ox, oz);
+      tick(1 / 60);
+      const e = g.spawnEnemy('raider');
+      e.pos.set(ix, room.floor, iz);
+      e.group.position.copy(e.pos);
+      e.group.rotation.y = Math.atan2(q.nx, q.nz);
+      e.group.updateMatrixWorld(true);
+      const muzzle = e.parts.muzzle.getWorldPosition(new THREE.Vector3());
+      const head = p.head;
+      if (!W.lineOfSight(muzzle.x, muzzle.y, muzzle.z, head.x, head.y, head.z)) { e.alive = false; e.group.visible = false; continue; }
+      out.hostile.tried++;
+      e._shoot(p, W);
+      if (!q.intact) out.hostile.broke++;
+      e.alive = false; e.group.visible = false;
+      if (out.hostile.tried >= 3) break;
+    }
+    p.health = 100;
+
+    out.broken = G.broken;
+    g.startRun();
+    out.reset = G.panes.every((q) => q.intact) && G.shards.length === 0;
+    return out;
+  });
+  // Measured on seed 1: 337 panes in 0.45 of the windows, 39 of them a shop's.
+  expect(r.panes >= 100 && r.shop >= 15, `${r.panes} panes, ${r.shop} in shops`);
+  expect(r.panes > r.windows * 0.3 && r.panes < r.windows * 0.6, `${r.panes} panes in ${r.windows} windows`);
+  expect(!r.listed, 'a pane is in a collision list');
+  expect(r.shot.tried >= 6 && r.shot.broke === r.shot.tried, `rounds through ${r.shot.tried} panes broke ${r.shot.broke}`);
+  expect(r.shot.stopped === 0, `${r.shot.stopped} rounds stopped short of a pane`);
+  expect(r.shards.landed > 50 && r.shards.off < 0.01, `${r.shards.landed} shards down, ${r.shards.off} m off their floor`);
+  expect(r.blast.seen && r.blast.hidden, `no blast spot found: ${JSON.stringify(r.blast)}`);
+  expect(r.blast.broke, 'a blast 3 m from a pane left it whole');
+  expect(!r.blast.walled, 'a blast past a wall broke a pane');
+  expect(r.body.tried >= 2 && r.body.broke === r.body.tried, `pull-ups through ${r.body.tried} shop windows broke ${r.body.broke}`);
+  expect(r.hostile.tried >= 1 && r.hostile.broke === r.hostile.tried, `hostile shots through ${r.hostile.tried} panes broke ${r.hostile.broke}`);
+  expect(r.reset, 'a new run did not put the glass back');
+  return r;
+});
+
 check('stairs carry the player onto a perch', async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
@@ -6221,6 +6506,217 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
   expect(r.scavStoop < 0.02, `a scavenger stooped ${r.scavStoop} on a stair it fits under standing`);
   expect(!r.warlord.went && r.warlord.top < 0.6, `a warlord went up a stair it does not fit: ${JSON.stringify(r.warlord)}`);
   return { stairs: r.stairs, follow: r.follow, peak: r.peak, stoop: r.stoop, scavStoop: r.scavStoop, warlord: r.warlord };
+});
+
+check('crouch out of a sprint and you slide: low, quick, and stopped by a wall', async (page) => {
+  const r = await page.evaluate(() => {
+    const g = window.__game, W = g.world, p = g.player, K = g.input.keys;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const frame = () => { g.time += 1 / 60; g.step(1 / 60); };
+    // clear and level: no step up (a kerb is fine where `level` allows it)
+    const clearRun = (x, z, ux, uz, len, level = 0.05) => {
+      for (let t = 0; t <= len; t += 0.5) {
+        const px = x + ux * t, pz = z + uz * t;
+        if (Math.abs(px) > W.bounds - 2 || Math.abs(pz) > W.bounds - 2) return false;
+        if (W.groundHeight(px, pz, 0.45, 2) > level || W.blocked(px, pz, 0.7, 0.3)) return false;
+      }
+      return true;
+    };
+    // along a street with 30 m of clear road ahead
+    let start = null;
+    for (const c of g.streets.centres) for (let x = -120; x < 90 && !start; x += 2) {
+      if (clearRun(x, c, 1, 0, 30)) start = { x, z: c };
+    }
+    const out = { found: !!start };
+    if (!start) return out;
+    const go = (crouch, sprint, jump = false) => {
+      p.reset(start.x, start.z);
+      p.yaw = -Math.PI / 2;                     // facing +x
+      K.clear(); K.add('KeyW'); if (sprint) K.add('ShiftLeft');
+      for (let f = 0; f < 60; f++) frame();
+      const x0 = p.position.x;
+      if (crouch) K.add('ControlLeft');
+      let peak = 0, minEye = 9, drop = 0, last = p.eyeHeight, slid = 0, air = 0;
+      for (let f = 0; f < 54; f++) {
+        if (jump && f === 12) K.add('Space');
+        frame();
+        peak = Math.max(peak, Math.hypot(p.velocity.x, p.velocity.z));
+        minEye = Math.min(minEye, p.eyeHeight);
+        drop = Math.max(drop, last - p.eyeHeight); last = p.eyeHeight;
+        if (p.slide) slid++;
+        if (!p.onGround) air = Math.max(air, Math.hypot(p.velocity.x, p.velocity.z));
+      }
+      K.clear();
+      for (let f = 0; f < 30; f++) frame();
+      return { dist: +(p.position.x - x0).toFixed(2), peak: +peak.toFixed(2), minEye: +minEye.toFixed(2),
+        drop: +drop.toFixed(3), slid, air: +air.toFixed(2), slides: p.slides };
+    };
+    out.sprint = go(false, true);
+    out.slide = go(true, true);
+    out.walk = go(true, false);
+    out.jump = go(true, true, true);
+
+    // into a wall: a building face 9 m ahead of a sprint, a slide into it
+    out.wall = { tried: 0, stopped: 0, inside: 0 };
+    for (const b of W.boxes) {
+      if (out.wall.tried >= 4) break;
+      if (b.sin !== 0 || b.base || b.floor || b.top < 3 || b.maxX - b.minX < 4) continue;
+      const fz = (b.minZ + b.maxZ) / 2, fx = b.minX;
+      const x0 = fx - 17;
+      if (!clearRun(x0, fz, 1, 0, 16.4, 0.35)) continue;
+      p.reset(x0, fz);
+      p.yaw = -Math.PI / 2;
+      K.clear(); K.add('KeyW'); K.add('ShiftLeft');
+      let f = 0;
+      for (; f < 120 && p.position.x < fx - 6.5; f++) frame();
+      K.add('ControlLeft');
+      let contact = -1, after = -1, inside = false;
+      for (let k = 0; k < 60; k++) {
+        frame();
+        if (contact < 0 && p.position.x > fx - p.radius - 0.05) contact = k;
+        if (contact >= 0 && after < 0 && !p.slide) after = k - contact;
+        if (p.position.x > fx - p.radius + 0.02) inside = true;
+      }
+      K.clear();
+      out.wall.tried++;
+      if (contact >= 0 && after >= 0 && after <= 4) out.wall.stopped++;
+      if (inside) out.wall.inside++;
+    }
+    return out;
+  });
+  expect(r.found, 'no 30 m of clear road on this seed');
+  // Measured on seed 1: a slide peaks at 11.1 m/s against a sprint's 8.2 and
+  // takes the eye to 0.82 m.
+  expect(r.slide.slid > 30 && r.slide.peak > r.sprint.peak * 1.25, `slide: ${r.slide.slid} frames, peak ${r.slide.peak} against ${r.sprint.peak}`);
+  expect(r.slide.minEye < 0.9, `the eye went no lower than ${r.slide.minEye}`);
+  expect(r.slide.drop < 0.16, `the view dropped ${r.slide.drop} m in a frame`);
+  expect(r.slide.dist > 5, `a slide covered ${r.slide.dist} m`);
+  expect(r.walk.slid === 0 && r.walk.minEye > 1, `a crouch from a walk slid ${r.walk.slid} frames`);
+  expect(r.jump.air > 7, `a jump out of a slide carried ${r.jump.air} m/s`);
+  expect(r.wall.tried >= 2, `only ${r.wall.tried} walls to slide into`);
+  expect(r.wall.stopped === r.wall.tried, `${r.wall.tried - r.wall.stopped} slides kept going into a wall`);
+  expect(r.wall.inside === 0, `${r.wall.inside} slides ended inside a wall`);
+  return r;
+});
+
+check('a lean puts the head round a corner and never through a wall, and the hostiles see it', async (page) => {
+  const r = await page.evaluate(() => {
+    const g = window.__game, W = g.world, p = g.player, K = g.input.keys;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; g.waveHpScale = 1;
+    const frame = (n = 1) => { for (let i = 0; i < n; i++) { g.time += 1 / 60; g.step(1 / 60); } };
+    const inside = (v) => W.boxes.some((b) => !b.floor && v.y < b.top && v.y > (b.base || 0)
+      && v.x > b.minX && v.x < b.maxX && v.z > b.minZ && v.z < b.maxZ
+      && (b.sin === 0 || Math.abs(b.cos * (v.x - b.cx) - b.sin * (v.z - b.cz)) < b.hx));
+    const open = (x, z) => Math.abs(x) < W.bounds - 2 && Math.abs(z) < W.bounds - 2
+      && W.groundHeight(x, z, 0.12, 0.6) < 0.5 && !W.blocked(x, z, 0.5, 0.3);
+    const out = { corners: 0, peeked: 0, hidden: 0, shotLeaning: 0, shotStanding: 0, wall: { tried: 0, through: 0 } };
+
+    // A corner of a tall block, from either side of it: standing beside the
+    // block's face, just short of its edge and facing the block, the block
+    // hides what is round the corner; a lean toward the edge puts the head
+    // past it. Every corner, both ways round, in the block's own frame.
+    const setups = [];
+    for (const b of W.boxes) {
+      // a block or a container, not a wall: deep enough that what is past
+      // its corner is what it hides, and taller than a head
+      if (b.sin !== 0 || b.base || b.floor || b.top < 2.2 || b.maxX - b.minX < 2.4 || b.maxZ - b.minZ < 2.4) continue;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const cx = sx > 0 ? b.maxX : b.minX, cz = sz > 0 ? b.maxZ : b.minZ;
+        // beside the face across z, leaning along x; and the same turned
+        // a quarter-metre short of the edge, so a lean puts the head about
+        // as far past it
+        setups.push({ px: cx - sx * 0.25, pz: cz + sz * 0.75, yaw: sz > 0 ? 0 : Math.PI, lean: sx * sz,
+          tx: cx + sx * 3, tz: cz - sz * 6, ox: cx + sx * 0.25, oz: cz + sz * 0.75 });
+        setups.push({ px: cx + sx * 0.75, pz: cz - sz * 0.25, yaw: sx * Math.PI / 2, lean: -sx * sz,
+          tx: cx - sx * 6, tz: cz + sz * 3, ox: cx + sx * 0.75, oz: cz + sz * 0.25 });
+      }
+    }
+    for (const c of setups) {
+      if (out.corners >= 4) break;
+      if (!open(c.px, c.pz) || !open(c.tx, c.tz)) continue;
+      p.reset(c.px, c.pz);
+      p.yaw = c.yaw;
+      frame(2);
+      const eye = p.position.clone();
+      const T = { x: c.tx, y: W.groundHeight(c.tx, c.tz, 0.12, 0.6) + 1.5, z: c.tz };
+      if (W.lineOfSight(T.x, T.y, T.z, eye.x, eye.y, eye.z)) continue;
+      // and from a quarter-metre past the edge it is in plain view: what the
+      // block hides is open street, not the next building across an alley
+      if (!W.lineOfSight(T.x, T.y, T.z, c.ox, eye.y, c.oz)) continue;
+      out.corners++;
+      const key = c.lean > 0 ? 'KeyE' : 'KeyQ';
+      K.add(key);
+      frame(30);
+      const head = p.head;
+      if (W.lineOfSight(T.x, T.y, T.z, head.x, head.y, head.z)) out.peeked++;
+      if (!W.lineOfSight(T.x, T.y, T.z, p.position.x, p.position.y, p.position.z)) out.hidden++;
+      // a raider there, held where it stands, shoots what it can see
+      const fight = (lean) => {
+        if (!lean) { K.clear(); frame(30); } else frame(1);
+        const e = g.spawnEnemy('raider');
+        const update = e.update.bind(e);
+        e.update = (dt, time, pl, w) => { update(dt, time, pl, w); e.pos.set(T.x, T.y - 1.5, T.z); e.group.position.copy(e.pos); };
+        e.pos.set(T.x, T.y - 1.5, T.z);
+        e.alert(g.time);
+        let hits = 0;
+        const take = g.damagePlayer.bind(g);
+        g.damagePlayer = () => { hits++; };
+        frame(150);
+        g.damagePlayer = take;
+        e.alive = false; e.group.visible = false;
+        return hits;
+      };
+      if (fight(true) > 0) out.shotLeaning++;
+      if (fight(false) > 0) out.shotStanding++;
+      K.clear(); frame(20);
+    }
+
+    // into a wall: a lean toward a wall a hand's breadth off the shoulder
+    for (const b of W.boxes) {
+      if (out.wall.tried >= 6) break;
+      if (b.sin !== 0 || b.base || b.floor || b.top < 3 || b.maxZ - b.minZ < 3) continue;
+      // shoulder to the wall: a body's radius off it, so a lean the full
+      // half-metre would put the head 4 cm into it
+      const px = b.minX - 0.44, pz = (b.minZ + b.maxZ) / 2;
+      if (!W.lineOfSight(px - 0.5, 1.5, pz, px, 1.5, pz) || W.groundHeight(px, pz, 0.12, 0.6) > 0.5) continue;
+      if (W.boxes.some((o) => o !== b && !o.floor && o.top > 1 && o.maxX > px - 0.6 && o.minX < px + 0.6 && o.maxZ > pz - 0.6 && o.minZ < pz + 0.6)) continue;
+      p.reset(px, pz);
+      p.yaw = 0;                                  // the wall on the right
+      frame(2);
+      K.add('KeyE');
+      let worst = false;
+      for (let f = 0; f < 40; f++) { frame(); if (inside(g.camera.position) || inside(p.head)) worst = true; }
+      out.wall.tried++;
+      if (worst) out.wall.through++;
+      out.wall.reach = +p.leanOffset.length().toFixed(3);
+      K.clear(); frame(20);
+    }
+
+    // a tap of Q still cycles the weapon, and a hold does not
+    const fire = (type) => window.dispatchEvent(new KeyboardEvent(type, { code: 'KeyQ' }));
+    p.reset(g.streets.centres[2], g.streets.centres[2]);
+    frame(5);
+    const w0 = g.weapons.index;
+    fire('keydown'); frame(2); fire('keyup'); frame(40);
+    const w1 = g.weapons.index;
+    fire('keydown'); frame(30); out.held = +p.lean.toFixed(2); fire('keyup'); frame(40);
+    out.tap = w1 !== w0;
+    out.hold = g.weapons.index === w1;
+    return out;
+  });
+  expect(r.corners >= 2, `only ${r.corners} corners to lean round`);
+  expect(r.peeked === r.corners && r.hidden === r.corners, `leaning round ${r.corners} corners: head out at ${r.peeked}, body hidden at ${r.hidden}`);
+  expect(r.shotLeaning === r.corners, `a raider round the corner shot ${r.shotLeaning} of ${r.corners} leaning heads`);
+  expect(r.shotStanding === 0, `a raider round the corner shot ${r.shotStanding} players it could not see`);
+  expect(r.wall.tried >= 3 && r.wall.through === 0, `${r.wall.through} of ${r.wall.tried} leans into a wall put the head in it`);
+  expect(r.tap && r.hold && r.held < -0.9, `a tap of Q cycled ${r.tap}, a hold leaned ${r.held} and left the weapon ${r.hold}`);
+  return r;
 });
 
 check('sprinting until you are winded does not shake the gun', async (page) => {
