@@ -83,6 +83,7 @@ builds, never to play.
 | `src/shapes.js` | Chamfers, lofts, side profiles, lathes, creased normals, merging — the shapes that are not boxes |
 | `src/post.js` | Ambient occlusion, bloom, tone mapping, grade, vignette, grain |
 | `src/atmosphere.js` | The sky, the sun and the fog — one model, so they agree |
+| `src/ash.js` | The ash falling round the camera and the smoke columns over the city, and the roof map that keeps ash out of buildings |
 | `src/shadows.js` | The sun's two shadow cascades, snapped to their texels |
 | `src/windows.js` | Window openings traced in the facade shader: reveal, glass, room |
 | `src/audio.js` | Every sound, synthesised via Web Audio |
@@ -1338,6 +1339,27 @@ These each cost real debugging time. Changing them needs a reason.
   `weeds grow where they can stand, and stay off the low tier` (838 inside
   a collider with the clearance test out; shown on low with the tier
   ignored) guard them.
+- **Ash falls in the open, and the smoke is far off.** `ash.js` is the
+  game's name made visible: about 5,000 flakes (`ASH_TIER`: 5,000, 3,500,
+  1,500 by tier) tumbling down and drifting on `WIND` round the camera,
+  and four smoke columns past the wall bending downwind with the same wind.
+  Both are placed entirely in their vertex shaders off game time and a hash
+  per flake or puff, so the CPU sets two uniforms a frame (`updateAsh`, in
+  `frame`) and a paused game is a still one; they are built in a `reserve`,
+  in neither collision list, and draw nothing from `Math.random`, so the
+  layout and the mark after boot are unchanged. Two things are
+  load-bearing. **A flake is hidden under anything standing over it**: the
+  vertex shader reads a height map of the tallest box over each square
+  metre (`roofMap`, every box topped over 1.2 m and wider than 0.6 m, and
+  the outskirts' blocks), or ash fell through every ceiling into every
+  shop. And **ash is dark**: there is no shadow lookup, so a flake lit
+  like the sunlit street (0.3 linear, the first cut) read as pale snow
+  against a shaded pavement; at 0.05 it is a dark fleck against sky, sun
+  and shade alike. `ash falls in the open and not under a roof, and smoke
+  stands over the city` compares frames with each on and off: 0.23% of a
+  frame on the plaza, 0.01% at worst inside six shops, and 0.125% inside
+  with the roof test taken out; each column at least 0.5% looking at it.
+  Two draw calls, both transparent and casting nothing.
 - **Water is a mirror for the sky and not for the sun; litter and puddles
   lie on one level or not at all.** A puddle (`puddles` in `city.js`) is a
   near-black fan at roughness 0.06, so it shows the environment map — the
@@ -3847,6 +3869,11 @@ secure origin, which Vercel provides.
 
 Suggested next work, in the order I would do it:
 
+0. **Give the sky ash to match.** The zenith is still a clean afternoon
+   blue, which the ash and smoke now argue with. Greying the zenith and
+   the cloud toward a smoke-stained haze is one function
+   (`ashAtmosphere`), but `the sky, the fog and the light are one
+   atmosphere` and the low tier's brightness match both measure it.
 1. **Tune the operation against play.** The payouts (300-1,500 a wave, in
    `OBJECTIVE_PAY`), the clocks, the lieutenant's pace and the holdout's
    drain are first guesses, and so is whether twelve waves is the right

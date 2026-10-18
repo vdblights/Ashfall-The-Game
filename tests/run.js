@@ -5179,6 +5179,102 @@ check('the sky has weather in it', async (page) => {
   return r;
 });
 
+check('ash falls in the open and not under a roof, and smoke stands over the city', async (page) => {
+  // The ash (`ash.js`) is a few thousand points placed by their shader off
+  // game time and a seed each, and it is kept out from under anything that
+  // stands over a body by a height map baked from the box list. That map is
+  // the part that can go quietly wrong: without it, or with it read wrong,
+  // ash falls through every shop's ceiling. So this compares frames with the
+  // ash on and off, on the plaza and from inside every shop looking into it,
+  // and frames with the smoke on and off looking out at each column.
+  const r = await page.evaluate(() => {
+    const g = window.__game, A = g.ashfall;
+    g.startRun();
+    g.applyQuality('high');
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    if (g.viewScene) g.viewScene.visible = false;
+    const gl = g.renderer.getContext();
+    const frame = () => {
+      g.updateAsh();
+      g.render();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return px;
+    };
+    const share = (a, b) => {
+      let n = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const la = a[i] * 0.3 + a[i + 1] * 0.5 + a[i + 2] * 0.2;
+        const lb = b[i] * 0.3 + b[i + 1] * 0.5 + b[i + 2] * 0.2;
+        if (Math.abs(la - lb) > 6) n++;
+      }
+      return n / (a.length / 4);
+    };
+    // one placement, two renders: nothing may move between them but the
+    // thing switched
+    const changed = (obj) => {
+      obj.visible = true; const a = frame();
+      obj.visible = false; const b = frame();
+      obj.visible = true;
+      return share(a, b);
+    };
+    const look = (x, y, z, tx, ty, tz) => {
+      g.camera.position.set(x, y, z);
+      g.camera.lookAt(tx, ty, tz);
+      g.camera.updateMatrixWorld();
+    };
+    for (let i = 0; i < 5; i++) { g.time += 1 / 60; g.step(1 / 60); }
+
+    // in the open, at the plaza, looking along the street
+    look(-17, 1.9, 24, -17, 1.2, 0);
+    const open = changed(A.ash);
+
+    // from inside every shop, three metres in from a doorway, looking in
+    const rooms = [];
+    for (const room of g.world.rooms) {
+      const d = room.doors[0];
+      if (!d) continue;
+      const x = d.x - d.nx * 3, z = d.z - d.nz * 3;
+      const floor = g.world.groundHeight(x, z, 0.12, 2);
+      look(x, floor + 1.6, z, x - d.nx * 6, floor + 0.9, z - d.nz * 6);
+      rooms.push(changed(A.ash));
+      if (rooms.length >= 6) break;
+    }
+    const indoors = Math.max(...rooms);
+
+    // each smoke column, from 30 m over the plaza
+    const plumes = A.sites.map((s) => {
+      look(-17, 30, 24, s.x, s.y + s.height * 0.4, s.z);
+      return changed(A.smoke);
+    });
+
+    // time is game time; and neither is anything to collide with or shoot
+    g.time = 123.5; g.updateAsh();
+    const clock = A.ashMat.uniforms.time.value === 123.5 && A.smokeMat.uniforms.time.value === 123.5;
+    const listed = g.world.solids.includes(A.ash) || g.world.solids.includes(A.smoke);
+    const lowDraws = (g.applyQuality('low'), A.ash.geometry.drawRange.count);
+    const highDraws = (g.applyQuality('high'), A.ash.geometry.drawRange.count);
+    if (g.viewScene) g.viewScene.visible = true;
+    const pct = (v) => +(v * 100).toFixed(3);
+    return {
+      open: pct(open), indoors: pct(indoors), rooms: rooms.length, plumes: plumes.map(pct),
+      sites: A.sites.map((s) => Math.round(Math.hypot(s.x, s.z))), edge: 136,
+      clock, listed, lowDraws, highDraws,
+    };
+  });
+  expect(r.rooms >= 6, `only ${r.rooms} shops to look into`);
+  expect(r.open > 0.1, `ash changed only ${r.open}% of a frame in the open`);
+  expect(r.indoors < r.open / 5, `ash changed ${r.indoors}% of a frame inside a shop, against ${r.open}% in the open`);
+  expect(r.plumes.filter((p) => p > 0.5).length >= 3, `smoke columns changed ${r.plumes.join(', ')}% of a frame looking at them`);
+  expect(r.sites.every((d) => d > r.edge + 30), `a smoke column stands at ${r.sites} m, inside or against the wall`);
+  expect(r.clock, 'the ash and the smoke do not run on game time');
+  expect(!r.listed, 'the ash or the smoke is a raycast target');
+  expect(r.lowDraws > 0 && r.lowDraws < r.highDraws, `low draws ${r.lowDraws} flakes against high's ${r.highDraws}`);
+  return r;
+});
+
 check('weeds grow where they can stand, and stay off the low tier', async (page) => {
   // The overgrowth is decoration: in neither collision list, placed by the
   // city's private generator, so it must only grow where something could —
