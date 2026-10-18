@@ -425,7 +425,12 @@ class Game {
         // compiled program is not always a finished one, and the work some
         // drivers leave for its first draw is better spent here than at first
         // contact.
-        this.render();
+        //
+        // Not for the suite, unless a check asks (`?warm`): drawn in software,
+        // with nothing culled, this one frame was 13 s of every check's 33 s
+        // boot on CI, and the checks that never draw anything paid it too.
+        // The programs are built by the compile above either way.
+        if (!this.suite || new URLSearchParams(location.search).has('warm')) this.render();
         for (const o of shown) o.visible = false;
         for (const o of unculled) o.frustumCulled = true;
         for (const b of bodies.children) this.hostiles.untrack(b);
