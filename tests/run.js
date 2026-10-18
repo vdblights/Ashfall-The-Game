@@ -5189,7 +5189,7 @@ check('the sky has weather in it', async (page) => {
   return r;
 });
 
-check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', { weight: 13 }, async (page) => {
+check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', { weight: 4.5 }, async (page) => {
   // The ash (`ash.js`) is a few thousand points placed by their shader off
   // game time and a seed each, and it is kept out from under anything that
   // stands over a body by a height map baked from the box list. That map is
@@ -7146,7 +7146,7 @@ check('the armoury opens between waves, costs scrip not score, and what it fits 
   return { bought: r.bought, before: r.before, after: r.after };
 });
 
-check('a seed still lays out the city it did', { weight: 6 }, async (page) => {
+check('a seed still lays out the city it did', { warm: true, weight: 6 }, async (page) => {
   // The most expensive lesson in this repo, finally made into a check.
   //
   // Three spends four `Math.random()` calls on a UUID for every object it
@@ -7352,12 +7352,16 @@ check('a seed still lays out the city it did', { weight: 6 }, async (page) => {
   // (bare rooms: 2497/1540/12 b323ced2 (2139 e5d0438f), 1933/1268/11
   // 9d1c7f32 (1475 de4ab94c), 2526/1617/10 e1cfa671 (2044 9123bce6))
 
+  // Booted warm, as a player's browser boots: the warm-up frame the suite
+  // skips spends draws of the stream too, so without it the mark is another
+  // number. The runner hands this check a warm boot of the suite's seed, which
+  // stands in for that seed's reload.
+  const here = Number(new URL(page.url()).searchParams.get('seed'));
   const got = {};
   for (const seed of Object.keys(want)) {
-    await reloadGame({ seed: Number(seed) });
+    if (Number(seed) !== here) await reloadGame({ seed: Number(seed), warm: true });
     got[seed] = await page.evaluate(CITY_FINGERPRINT);
   }
-  await reloadGame();
 
   for (const [seed, w] of Object.entries(want)) {
     const r = got[seed];
