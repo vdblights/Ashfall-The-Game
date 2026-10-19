@@ -66,6 +66,9 @@ export function buildDropPrototypes() {
       { dark: 0.9, lite: 0.2, metalDark: 0.5, metalLite: 1 }, { color: 0xb8bec6, metalness: 1, envMapIntensity: 0.9 })),
     fitting: new THREE.MeshStandardMaterial(surface(TEX.gunPolymer(), 'gunpoly',
       { dark: 1, lite: 0.6 }, { color: 0x5a5c60, metalness: 0, envMapIntensity: 0.6 })),
+    // a plate's cordura cover, in coyote, and the same kept as findable
+    plate: new THREE.MeshStandardMaterial(surface(TEX.webbing(), 'plateweb',
+      { dark: 1, lite: 0.7 }, { color: 0xb49c70, metalness: 0, envMapIntensity: 0.6, emissive: 0x14110a })),
   };
   // unlit, as the flat cross was, and dimmed below white so the bloom leaves it
   const crossMat = new THREE.MeshBasicMaterial({ map: TEX.firstAidLabel(), color: 0xd4d4d4 });
@@ -209,6 +212,29 @@ export function buildDropPrototypes() {
     proto.frag.add(part([body], mats.frag, top / 2, TILE.frag));
     proto.frag.add(part([fuze, spoon, pin, ring], mats.latch, top / 2, TILE.gunMetal));
     halo(proto.frag, 0xe0583a);
+  }
+
+  // ---- the armour plate: a single-curve insert with the shooter's cut at
+  // its top corners, in its cover, with two elastic keepers and a buckle.
+  // Only ever found in a building (`loot.js`); a hostile never drops one.
+  {
+    const K = TILE.kit, W = 0.3, H = 0.38, T = 0.032, cut = 0.075;
+    // drawn in (z, y), the face across X, then bent round a vertical axis,
+    // as a plate is, so the light runs across it rather than lying flat
+    const plate = sideGeo([[-W / 2, 0, 0.03], [W / 2, 0, 0.03], [W / 2, H - cut, 0.01], [W / 2 - cut, H, 0.01],
+      [-W / 2 + cut, H, 0.01], [-W / 2, H - cut, 0.01]], T, { tile: K, bevel: 0.009, segs: 2 });
+    const keepers = [];
+    for (const y of [0.1, 0.25]) keepers.push(chamferGeo(T + 0.008, 0.032, W + 0.006, 0.004, TILE.gunPoly, [0, y, 0]));
+    keepers.push(chamferGeo(0.012, 0.05, 0.045, 0.004, TILE.gunPoly, [T / 2 + 0.008, 0.25, 0.05]));
+    const bend = (g) => {
+      const p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setX(i, p.getX(i) - 0.9 * p.getZ(i) * p.getZ(i));
+      return g;
+    };
+    proto.armour = new THREE.Group();
+    proto.armour.add(part([bend(plate)], mats.plate, H / 2, K));
+    proto.armour.add(part(keepers.map(bend), mats.fitting, H / 2, TILE.gunPoly));
+    halo(proto.armour, 0x4c9cff);
   }
 
   for (const p of Object.values(proto)) p.traverse((o) => { if (o.isMesh && !o.userData.halo) o.castShadow = true; });

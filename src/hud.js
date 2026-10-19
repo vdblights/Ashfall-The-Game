@@ -9,6 +9,7 @@ export class HUD {
     this.el = {
       hud: $('hud'), wave: $('wave'), enemies: $('enemies-left'), score: $('score'), scrip: $('scrip'),
       healthFill: $('health-fill'), healthNum: $('health-num'), staminaFill: $('stamina-fill'),
+      armourWrap: $('armour-wrap'), armourFill: $('armour-fill'), armourNum: $('armour-num'),
       weaponName: $('weapon-name'), mag: $('mag'), reserve: $('reserve'), ammo: $('ammo'),
       reloadHint: $('reload-hint'), slots: $('weapon-slots'), crosshair: $('crosshair'),
       hitmarker: $('hitmarker'), killfeed: $('killfeed'), banner: $('wave-banner'),
@@ -119,6 +120,10 @@ export class HUD {
     this.el.healthFill.classList.toggle('low', hp < 40);
     this.el.healthNum.textContent = hp;
     this.el.staminaFill.style.width = p.stamina * 100 + '%';
+    const ap = Math.max(0, Math.round(p.armour || 0));
+    this.el.armourFill.style.width = (ap / p.maxArmour) * 100 + '%';
+    this.el.armourWrap.classList.toggle('none', ap === 0);
+    this.el.armourNum.textContent = ap;
 
     this.el.weaponName.textContent = w.def.name;
     this.el.mag.textContent = w.mag;
@@ -316,7 +321,7 @@ export class HUD {
       if (Math.hypot(dx, dz) > range) continue;
       const rx = dx * Math.cos(yaw) - dz * Math.sin(yaw);
       const rz = dx * Math.sin(yaw) + dz * Math.cos(yaw);
-      ctx.fillStyle = pk.kind === 'health' ? '#7ad06a' : '#ffd23f';
+      ctx.fillStyle = pk.kind === 'health' ? '#7ad06a' : pk.kind === 'armour' ? '#6aa8ff' : '#ffd23f';
       ctx.fillRect(cx + (rx / range) * r - 2, cy + (rz / range) * r - 2, 4, 4);
     }
 
