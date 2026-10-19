@@ -240,7 +240,7 @@ const SILL = 0.95, PIER = 0.9;
  */
 const STAIR = (() => {
   const s = { LANE: 1.25, SPINE: 0.2, WALL: 0.2, TREAD: 0.28, STEPS: 10, LD: 1.3,
-    THICK: 0.3, HUT: 2.6, DOOR: 2.5, top: 14 };
+    THICK: 0.3, HUT: 2.6, DOOR: 2.5, top: 14, clear: 2.45 };
   s.FL = s.TREAD * s.STEPS;
   s.Lin = s.FL + s.LD * 2;
   s.Win = s.LANE * 2 + s.SPINE;
@@ -250,11 +250,29 @@ const STAIR = (() => {
 })();
 
 /**
- * Which buildings you can walk into: about one in three, by where it stands,
- * so the choice costs the seeded stream nothing.
+ * Which buildings you can walk into: about six in ten, by where it stands,
+ * so the choice costs the seeded stream nothing. It was one in three, and
+ * from the street most of the city was a wall: reported from play as a lot
+ * of buildings you cannot get into. A tower that stays shut is a closed
+ * block with a shopfront painted on its street faces (`storefront`).
  */
+/**
+ * The headroom under a lap of a stairwell up a building `h` tall: two
+ * flights' rise less the slab, at most the doors. A roof a few tenths of a
+ * metre over two flights' worth of the 3.8 m rule splits into three laps of
+ * barely 2.3 m, and a juggernaut, stooped, walking down one has the landing
+ * above at its brow a stride before its feet are off the flight: stuck
+ * there, on the one such stair on seed 1 once more shops had stairs. A
+ * building with laps that low keeps its shop and goes without the stair
+ * (`STAIR.clear`).
+ */
+function lapClear(h) {
+  const D = h + 0.8, n = 2 * Math.ceil((D - KERB) / 3.8);
+  return Math.min(2 * (D - KERB) / n - STAIR.THICK, STAIR.DOOR);
+}
+
 function opensAt(x, z) {
-  return hash2(Math.round(x), Math.round(z), 90) < 0.36;
+  return hash2(Math.round(x), Math.round(z), 90) < 0.6;
 }
 
 /**
@@ -4102,8 +4120,10 @@ export function buildCity(scene, painted = null) {
       }
       // A building that fills its lot has a street on every side and no
       // blank wall at all, so a piece stands out in the room instead, 1.4 m
-      // off every wall, which keeps it from under any window
-      if (free && faces.every((f) => f.street)) {
+      // off every wall, which keeps it from under any window. So does the
+      // last crate in a room whose stair and doorways took every blank wall
+      // (`free === 'any'`), a 10 m stair shop open on two sides
+      if (free === 'any' || free && faces.every((f) => f.street)) {
         for (let t = 0; t < 12; t++) {
           const turn = r(1000 + salt * 40 + t) < 0.5, gw = turn ? deep : len, gd = turn ? len : deep;
           const roomX = room.maxX - room.minX - 2.8 - gw, roomZ = room.maxZ - room.minZ - 2.8 - gd;
@@ -4167,7 +4187,8 @@ export function buildCity(scene, painted = null) {
     // and where that still leaves it short, a lone crate, which fits a gap
     // nothing longer does
     if (pieces.filter((q) => !q.column).length < 3) {
-      const o = site(0.75, 0.75, 141);
+      const o = site(0.75, 0.75, 141)
+        || pieces.filter((q) => !q.column).length < 2 && site(0.75, 0.75, 141, 'any');
       if (o) {
         const from = w.boxes.length;
         part(0.75, 0.75, 0.75, o.px, KERB, o.pz, crateFor(o.px, o.pz), true, TILE.wood);
@@ -4257,7 +4278,7 @@ export function buildCity(scene, painted = null) {
     }
 
     const room = { minX: x - bw / 2, maxX: x + bw / 2, minZ: z - bd / 2, maxZ: z + bd / 2, floor: KERB, ceiling: under, doors: [], windows: [] };
-    const shaft = h <= STAIR.top ? placeShaft(x, z, bw, bd, T, faces, r) : null;
+    const shaft = h <= STAIR.top && lapClear(h) >= STAIR.clear ? placeShaft(x, z, bw, bd, T, faces, r) : null;
     const footprint = { minX: x - bw / 2, maxX: x + bw / 2, minZ: z - bd / 2, maxZ: z + bd / 2 };
 
     // The floors above. Over most ground floors, a ceiling and nothing else,
@@ -4338,8 +4359,13 @@ export function buildCity(scene, painted = null) {
     // number in its room, so a stack of crates reads as one thing
     let pieceN = 0;
     const tag = (from) => { pieceN++; for (let k = from; k < w.boxes.length; k++) w.boxes[k].piece = pieceN; };
-    const furnish = (gw, gh, gd, px, py, pz, mat, tile = TILE.concrete, shape = null) => {
-      if (shaft && shaft.blocks(px, pz, gw, gd)) return;
+    // `gap`: how far past the shaft's own margin a piece keeps from it. A
+    // column or an aisle a metre or two off a stairwell closes the gap
+    // between them to the route field, whose shoulder runs round both, and
+    // with a wall or an open door leaf behind it that is a pocket of floor
+    // nothing is routed into: two rooms in fifty once six towers in ten opened
+    const furnish = (gw, gh, gd, px, py, pz, mat, tile = TILE.concrete, shape = null, gap = 0) => {
+      if (shaft && shaft.blocks(px, pz, gw + gap * 2, gd + gap * 2)) return;
       const from = w.boxes.length;
       part(gw, gh, gd, px, py, pz, mat, true, tile, shape && { geo: shape(gw, gh, gd, Math.round(px * 7) * 31 + Math.round(pz * 13)) });
       // a column is structure, not furniture: it keeps things clear of it
@@ -4349,10 +4375,11 @@ export function buildCity(scene, painted = null) {
       pieces.push({ x: px, z: pz, w: gw, d: gd, column });
     };
     const iw = bw - T * 2, id = bd - T * 2;           // the room, wall to wall
+    const AISLE_GAP = 3.2;
     if (Math.min(iw, id) > 15) {
       // a wide floor: columns on a grid, and aisles of shelving down the back
       // half of it, each with room at both ends to walk round
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) furnish(0.55, under, 0.55, x + sx * iw / 4, 0, z + sz * id / 4, conc);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) furnish(0.55, under, 0.55, x + sx * iw / 4, 0, z + sz * id / 4, conc, TILE.concrete, null, AISLE_GAP);
       if (front) {
         const deep = front.along === 'x' ? id : iw, across = front.along === 'x' ? iw : id;
         // one down the middle and one toward the back, clear of the column
@@ -4362,15 +4389,15 @@ export function buildCity(scene, painted = null) {
           const at = -front.s * depth * deep;          // from the middle toward the back
           // a gondola, stocked on both sides
           const aisle = (gw, gh, gd, seed) => shelvingGeo(gw, gh, gd, seed, 0);
-          if (front.along === 'x') furnish(len, 1.8, 0.9, x + off, KERB, z + at, fitMat, TILE.metal, aisle);
-          else furnish(0.9, 1.8, len, x + at, KERB, z + off, fitMat, TILE.metal, aisle);
+          if (front.along === 'x') furnish(len, 1.8, 0.9, x + off, KERB, z + at, fitMat, TILE.metal, aisle, AISLE_GAP);
+          else furnish(0.9, 1.8, len, x + at, KERB, z + off, fitMat, TILE.metal, aisle, AISLE_GAP);
         }
       }
     } else if (Math.max(iw, id) > 15) {
       // a long one: columns down its middle
       for (const s of [-1, 1]) {
-        if (iw > id) furnish(0.55, under, 0.55, x + s * iw / 4, 0, z, conc);
-        else furnish(0.55, under, 0.55, x, 0, z + s * id / 4, conc);
+        if (iw > id) furnish(0.55, under, 0.55, x + s * iw / 4, 0, z, conc, TILE.concrete, null, AISLE_GAP);
+        else furnish(0.55, under, 0.55, x, 0, z + s * id / 4, conc, TILE.concrete, null, AISLE_GAP);
       }
     }
     // a counter parallel to the shopfront, at the end of it away from its
