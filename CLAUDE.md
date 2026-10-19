@@ -74,7 +74,8 @@ builds, never to play.
 | `src/objectives.js` | Site placement, channel and stage state machine, marker, waypoint, and the cast an objective puts on the map (a lieutenant, a holdout) |
 | `src/story.js` | Operation ASHFALL as data: the briefing, the acts, which objective each wave brings, and every line the handler says |
 | `src/armoury.js` | What a run can buy between waves, what each tier does, and the screen it is bought on |
-| `src/drops.js` | What a hostile drops: the ammunition can, medical case and grenade, and their halos |
+| `src/drops.js` | What a hostile drops: the ammunition can, medical case and grenade, and their halos; and the armour plate a building holds |
+| `src/loot.js` | Where the caches in the buildings lie and what each holds, by a hash of the city |
 | `src/grenades.js` | Fuse, flight, bounce, detonation |
 | `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
 | `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
@@ -1724,6 +1725,24 @@ These each cost real debugging time. Changing them needs a reason.
   at twice it. The drops were never in the boot compile either, so the
   first to fall compiled the halo's program mid-fight; `nothing compiles at
   first contact` drops one of each now.
+- **A building is worth going into: caches lie in it, by a hash, for
+  free.** Some shops and floors (`LOOT` in `loot.js`: 0.6 and 0.45 of them)
+  hold one cache, or two in a room over 140 m², of ammunition, a medical case
+  or an armour plate, the plate found nowhere else. `cacheSpots` reads
+  `world.rooms` and `world.floors`, keeps off the walls, out of a stairwell
+  and its landing and 1.6 m from every doorway, asks the footing for the
+  room's own floor and `blocked` for a body's room, and prefers a spot
+  against something at the back of the room. It imports nothing and draws
+  nothing from `Math.random`; `stockCaches` puts them back at every
+  `startRun`, each a clone in a `reserve` paying no `spend`, because there
+  was nothing there before. So the layout, the mark after boot and every
+  spawn are untouched. A cache is a pickup flagged `cache`, which does not
+  time out. A plate puts 50 on the carrier (`player.armour`, a bar over
+  health), and the carrier takes `ARMOUR_SOAK` (0.6) of every armoured hit
+  out of itself until it is empty, after the armoury's plate-carrier tier;
+  a fall goes past it. On seed 1: 67 caches, 30 in shops and 37 on floors.
+  `the buildings hold caches` fails with the soak taken out, the clone out
+  of its `reserve`, and caches timing out like drops.
 - **Kit that is not a hit zone is armour you shoot through.** A hostile's
   plate, pauldrons, hood and pouches are merged into the meshes that already
   carry a `zone` — the torso, the rig, the head — rather than hung beside them

@@ -137,6 +137,9 @@ const BODY_HEIGHT = 1.85;      // feet to the crown, for ceilings
 // stepping off a container stack stings and a three-storey roof leaves you
 // on your last legs; from FALL.lethal it is a full health bar, which is
 // every stair roof of four storeys and up (they reach 14 m).
+/** The share of a hit an armour plate takes out of itself rather than you. */
+export const ARMOUR_SOAK = 0.6;
+
 export const FALL = { safe: 3.5, lethal: 11, curve: 1.5 };
 /** What a drop of `h` metres costs, out of a 100-point health bar. */
 export function fallDamage(h) {
@@ -216,6 +219,8 @@ export class Player {
     this.sprinting = false;
     this.health = 100;
     this.maxHealth = 100;
+    this.armour = 0;                // a plate found in a building, worn down by hits
+    this.maxArmour = 100;
     this.stamina = 1;
     this.winded = false;
     this.lastDamageTime = -99;
@@ -260,6 +265,16 @@ export class Player {
 
   heal(amount) {
     this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+
+  /**
+   * What a hit leaves after the plate has taken its share: `ARMOUR_SOAK` of
+   * it, out of the plate, until the plate is gone.
+   */
+  soak(amount) {
+    const taken = Math.min(this.armour, amount * ARMOUR_SOAK);
+    this.armour -= taken;
+    return amount - taken;
   }
 
   update(dt, time, input) {

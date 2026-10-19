@@ -289,6 +289,13 @@ medical case with the first-aid sign on it, or a frag, each over a soft halo
 in its own colour — amber, green, red — so you can find one across a street
 at dusk. Health regenerates five seconds after you stop taking fire. Your best wave and score are kept between sessions.
 
+The buildings are worth going into. Some shops and some of the floors over
+them hold a cache, stashed at the back of the room against a wall or a
+fitting: an ammunition can, a medical case, or an armour plate under a blue
+halo, which nothing else gives you. A plate puts 50 on the blue bar over your
+health, and while it lasts it takes 60% of every hit out of itself. Caches
+are put back at the start of each run and lie where they are until taken.
+
 ## The armoury
 
 When a wave is cleared, `B` opens the armoury for the intermission, which

@@ -182,6 +182,21 @@ html, body {
 }
 #health-fill.low { background: linear-gradient(90deg, #d9452f, #ff7a4a); }
 #health-num { font-size: 26px; font-weight: 700; color: #fff; min-width: 60px; }
+/* an armour plate's bar, over the health it is keeping, faint while there is none */
+#armour-wrap { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; transition: opacity 0.3s; }
+#armour-wrap.none { opacity: 0.3; }
+#armour-bar {
+  position: relative; width: 240px; height: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(130, 180, 255, 0.35);
+  transform: skewX(-20deg);
+}
+#armour-fill {
+  position: absolute; inset: 1px; width: 0;
+  background: linear-gradient(90deg, #3d86e8, #7fb8ff);
+  transition: width 0.18s ease-out;
+}
+#armour-num { font-size: 15px; font-weight: 700; color: #a9cdff; min-width: 60px; }
 #stamina-bar {
   margin-top: 8px; width: 240px; height: 4px;
   background: rgba(0, 0, 0, 0.5); transform: skewX(-20deg);

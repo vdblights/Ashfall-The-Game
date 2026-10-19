@@ -7987,6 +7987,83 @@ check('a drop is made the way the thing is, and costs the spawn stream what it d
   return r;
 });
 
+check('the buildings hold caches: ammunition, a medical case or a plate, and a plate takes a share of a hit', async (page) => {
+  // Loot used to come only off a hostile, so a shop was somewhere to hide and
+  // never somewhere to go. Some shops and floors now hold a cache (`loot.js`)
+  // against a wall and away from the doors: an ammunition can, a medical case
+  // or an armour plate, the last found nowhere else. Four things are held
+  // here. They are inside the buildings, on the floor of the room they are
+  // recorded in, with a body's room round each. They cost the spawn stream
+  // nothing and are the same every run, because where they go is a hash of
+  // the city and the clones are minted in a `reserve`. They do not time out
+  // the way a drop does. And a plate does what it says: walk onto one and the
+  // carrier reads 50, and a hit of 20 then costs 8 of health and 12 of plate.
+  const r = await page.evaluate(() => {
+    const g = window.__game, w = g.world, p = g.player;
+    const before = Math.random.mark();
+    g.startRun();
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const caches = g.pickups.filter((c) => c.cache);
+    const out = { n: caches.length, kinds: {}, shops: 0, floors: 0, outside: [], off: [], cramped: [] };
+    // what stocking them spent: everything startRun did, with and without them
+    const stock = g.stockCaches.bind(g);
+    const m0 = Math.random.mark(); stock(); const m1 = Math.random.mark();
+    out.spent = m0 !== m1;
+    for (const c of g.pickups.splice(g.pickups.length - caches.length)) g.scene.remove(c.mesh);
+    for (const c of caches) {
+      const x = c.mesh.position.x, z = c.mesh.position.z;
+      out.kinds[c.kind] = (out.kinds[c.kind] || 0) + 1;
+      const room = w.rooms.find((q) => x > q.minX && x < q.maxX && z > q.minZ && z < q.maxZ && Math.abs(q.floor - c.floor) < 0.1)
+        || w.floors.find((q) => x > q.minX && x < q.maxX && z > q.minZ && z < q.maxZ && Math.abs(q.floor - c.floor) < 0.1);
+      if (!room) { out.outside.push([+x.toFixed(1), +c.floor.toFixed(2), +z.toFixed(1)]); continue; }
+      if (w.rooms.includes(room)) out.shops++; else out.floors++;
+      const y = w.groundHeight(x, z, 0.12, c.floor + 0.6);
+      if (Math.abs(y - c.floor) > 0.08) out.off.push([+x.toFixed(1), +z.toFixed(1), +(y - c.floor).toFixed(2)]);
+      if (w.blocked(x, z, 0.4, c.floor + 0.3)) out.cramped.push([+x.toFixed(1), +z.toFixed(1)]);
+    }
+    // the same every run
+    const where = (list) => list.filter((c) => c.cache).map((c) => `${c.kind}@${c.mesh.position.x.toFixed(1)},${c.mesh.position.z.toFixed(1)}`).join(' ');
+    const first = where(g.pickups);
+    g.startRun();
+    g.startWave = () => {};
+    out.same = where(g.pickups) === first;
+    // a minute on, every one still lies where it was left
+    const held = g.pickups.filter((c) => c.cache).length;
+    p.reset(0, 0);
+    for (let f = 0; f < 70 * 4; f++) { g.time += 0.25; g.updatePickups(0.25); }
+    out.after = { held, left: g.pickups.filter((c) => c.cache).length };
+
+    // walk onto a plate, then take a hit
+    const plate = g.pickups.find((c) => c.cache && c.kind === 'armour');
+    const px = plate.mesh.position.x, pz = plate.mesh.position.z;
+    p.reset(px + 0.6, pz);
+    p.feetY = plate.floor; p.position.y = plate.floor + p.eyeHeight;
+    p.health = 100; p.armour = 0;
+    g.updatePickups(1 / 60);
+    out.taken = !g.pickups.includes(plate);
+    out.armour = p.armour;
+    g.state = 'playing';
+    g.damagePlayer(20, null);
+    out.hit = { health: p.health, armour: p.armour };
+    out.boot = before;
+    return out;
+  });
+  expect(r.n >= 30, `only ${r.n} caches in the city`);
+  for (const k of ['ammo', 'health', 'armour']) expect(r.kinds[k] >= 5, `only ${r.kinds[k] || 0} caches of ${k}`);
+  expect(r.shops >= 10 && r.floors >= 10, `${r.shops} caches in shops and ${r.floors} on floors`);
+  expect(r.outside.length === 0, `${r.outside.length} caches outside any room or floor, e.g. ${JSON.stringify(r.outside.slice(0, 3))}`);
+  expect(r.off.length === 0, `${r.off.length} caches off their floor, e.g. ${JSON.stringify(r.off.slice(0, 3))}`);
+  expect(r.cramped.length === 0, `${r.cramped.length} caches inside furniture or a wall, e.g. ${JSON.stringify(r.cramped.slice(0, 3))}`);
+  expect(!r.spent, 'stocking the caches spent draws of the spawn stream');
+  expect(r.same, 'the caches lie somewhere else on a second run');
+  expect(r.after.left === r.after.held, `${r.after.held - r.after.left} caches timed out in a minute`);
+  expect(r.taken && r.armour === 50, `walking onto a plate left the carrier at ${r.armour} (taken: ${r.taken})`);
+  expect(Math.abs(r.hit.health - 92) < 0.01 && Math.abs(r.hit.armour - 38) < 0.01,
+    `a hit of 20 on 50 of plate left ${r.hit.health} health and ${r.hit.armour} plate, where it should leave 92 and 38`);
+  return r;
+});
+
 check('a hostile faces you, and holds its weapon in both hands', async (page) => {
   // Two things about how a hostile moves, both of which were wrong for as long
   // as hostiles existed and neither of which any check noticed.

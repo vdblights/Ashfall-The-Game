@@ -17,6 +17,7 @@ import { TILE } from './textures.js';
 import { buildDropPrototypes, DROP_COST } from './drops.js';
 import { randRange, SUPPORT_RADIUS } from './world.js';
 import { NavGrid } from './nav.js';
+import { cacheSpots, LOOT } from './loot.js';
 import { ArmouryScreen, EFFECT, freshKit } from './armoury.js';
 import { PerfMeter } from './perf.js';
 import { Barrels, BARREL } from './barrels.js';
@@ -991,6 +992,7 @@ class Game {
     this.enemies.length = 0;
     for (const p of this.pickups) this.scene.remove(p.mesh);
     this.pickups.length = 0;
+    this.stockCaches();
     this.effects.reset();
     this.grenades.reset();
     this.barrels.reset();
@@ -1848,6 +1850,28 @@ class Game {
     this.pickups.push({ kind, mesh, active: true, born: this.time, floor });
   }
 
+  /**
+   * What was left in the buildings, put back at the start of every run: a
+   * can, a medical case or a plate in some of the shops and floors
+   * (`loot.js`). Each is a drop that lies where it was left and does not
+   * time out. Where they go is a hash of the city, and a clone in a
+   * `reserve` costs nothing, so stocking them moves no spawn — and, unlike a
+   * drop, pays nothing either, because there was nothing here before.
+   */
+  stockCaches() {
+    if (!this.cacheSpots) this.cacheSpots = cacheSpots(this.world);
+    for (const c of this.cacheSpots) {
+      const mesh = reserve(() => this.pickupProto[c.kind].clone());
+      this.dress(mesh);
+      // every room and floor wears a finish 1.5 cm over the slab the footing
+      // reads, and a halo laid on the slab is under it and never seen
+      const floor = c.floor + 0.016;
+      mesh.position.set(c.x, floor + 0.42, c.z);
+      this.scene.add(mesh);
+      this.pickups.push({ kind: c.kind, mesh, active: true, born: this.time, floor, cache: true });
+    }
+  }
+
   updatePickups(dt) {
     // the halos breathe together, which is what makes one catch the eye
     if (this.haloMats) for (const m of this.haloMats) m.opacity = 0.27 + 0.1 * Math.sin(this.time * 3.1);
@@ -1868,6 +1892,12 @@ class Game {
         if (p.kind === 'ammo') {
           taken = this.weapons.addAmmo(0.30, true);
           if (taken) this.hud.toast('AMMO +');
+        } else if (p.kind === 'armour') {
+          if (this.player.armour < this.player.maxArmour) {
+            this.player.armour = Math.min(this.player.maxArmour, this.player.armour + LOOT.armour);
+            this.hud.toast(`ARMOUR +${LOOT.armour}`);
+            taken = true;
+          }
         } else if (p.kind === 'frag') {
           if (this.nades < this.maxNades) {
             this.nades++;
@@ -1888,7 +1918,7 @@ class Game {
           continue;
         }
       }
-      if (this.time - p.born > 45) {
+      if (!p.cache && this.time - p.born > 45) {
         this.scene.remove(p.mesh);
         this.pickups.splice(i, 1);
       }
@@ -1921,7 +1951,7 @@ class Game {
 
   damagePlayer(amount, fromPos, unarmoured = false) {
     if (this.state !== 'playing' || this.player.dead) return;
-    if (!unarmoured) amount *= EFFECT.armour[this.kit.armour];
+    if (!unarmoured) amount = this.player.soak(amount * EFFECT.armour[this.kit.armour]);
     const died = this.player.damage(amount, this.time);
     audio.hurt();
 
