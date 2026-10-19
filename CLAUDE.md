@@ -772,6 +772,18 @@ These each cost real debugging time. Changing them needs a reason.
   triangles' centres were inside the block, so the check never sampled it.
   At 27 cm the strip is narrower than a foot, which the check already
   skips, and the rim you see is the same.
+- **A fall is judged by its height, and from a roof it kills.** It was
+  judged by impact speed past 13 m/s at 6 points a m/s, so the 14 m stair
+  roofs cost 71 and nothing in the sector could kill you. `FALL` and
+  `fallDamage` in `player.js`: nothing under 3.5 m, a full bar from 11 m,
+  rising as the 1.5 power between (6 m costs 19, 9 m 63). The height is the
+  feet's highest since they left the ground (`fallTop`), not worked back from
+  the landing speed: the step integrates a fall a frame ahead of the curve,
+  and a 9 m drop landed at the speed of 7.6 m. A plate carrier does not break
+  a fall (`damagePlayer`'s `unarmoured`). `a fall hurts by its height, and
+  from a roof it kills` drops from 3.2 to 14 m on an open spot — (0, 0) has a
+  prop a metre up, which read a 9 m drop as 8 — and fails on the old rule (9 m
+  left 59 health).
 - **Sprint stops when you run dry and stays stopped until a third is
   back** (`WIND_BACK`, `player.winded`). It used to cut out at an empty
   bar and come back a frame later with the key held, every frame: the gun

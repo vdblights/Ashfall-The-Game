@@ -1471,23 +1471,48 @@ check('a crossing drops its kerb, and the ramp you see is the ramp you walk', as
   return r;
 });
 
-check('long falls hurt, short drops do not', async (page) => {
+check('a fall hurts by its height, and from a roof it kills', async (page) => {
+  // A fall was judged by its impact speed past 13 m/s, at 6 points a m/s:
+  // 48 health off a 10 m roof and 71 off the 14 m ones, so no roof in the
+  // sector could kill you. It is judged by the height now (FALL in
+  // player.js): nothing under 3.5 m, a full bar from 11 m, and a plate
+  // carrier does not soften it. The height is the feet's highest since they
+  // left the ground: the landing speed under-read a 9 m drop as 7.6 m.
   const r = await page.evaluate(() => {
     const g = window.__game;
-    const drop = (h) => {
+    // somewhere open to the sky: (0, 0) has a prop standing a metre up in it
+    let at = null;
+    for (let i = 0; i < 400 && !at; i++) {
+      const x = -17 + (i % 20 - 10) * 1.5, z = 17 + (Math.floor(i / 20) - 10) * 1.5;
+      const low = g.world.groundHeight(x, z, 0.6, 0.6);
+      if (g.world.groundHeight(x, z, 0.6, 30) === low && !g.world.blocked(x, z, 0.6, low + 0.1)) at = { x, z };
+    }
+    const drop = (h, armour = 0) => {
       g.startRun();
+      g.startWave = () => {};
       g.input.locked = true;
       g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
-      g.player.reset(0, 0);
-      g.player.feetY = h;
+      g.kit.armour = armour;
+      g.player.reset(at.x, at.z);
+      g.player.feetY += h;
       g.player.velocity.y = 0;
-      for (let f = 0; f < 60 * 6; f++) { g.time += 1 / 60; g.step(1 / 60); }
-      return Math.round(g.player.health);
+      // long enough to land from the highest drop, short of regeneration
+      for (let f = 0; f < 60 * 3 && g.state === 'playing'; f++) { g.time += 1 / 60; g.step(1 / 60); }
+      const out = { health: Math.round(g.player.health), dead: g.player.dead };
+      g.kit.armour = 0;
+      return out;
     };
-    return { short: drop(3), long: drop(24) };
+    return {
+      car: drop(3.2), stack: drop(6), floor3: drop(9), armoured: drop(9, 3),
+      roof: drop(11.5), tall: drop(14),
+    };
   });
-  expect(r.short === 100, `a 3 m drop cost ${100 - r.short} health`);
-  expect(r.long < 60, `a 24 m fall only cost ${100 - r.long} health`);
+  await page.evaluate(() => localStorage.removeItem('ashfall.records'));
+  expect(r.car.health === 100, `a 3.2 m drop cost ${100 - r.car.health} health`);
+  expect(r.stack.health < 100 && r.stack.health > 60, `a 6 m drop left ${r.stack.health} health`);
+  expect(r.floor3.health < 50 && !r.floor3.dead, `a 9 m drop left ${r.floor3.health} health (dead: ${r.floor3.dead})`);
+  expect(r.armoured.health === r.floor3.health, `armour took a 9 m drop to ${r.armoured.health} against ${r.floor3.health}`);
+  expect(r.roof.dead && r.tall.dead, `an 11.5 m drop dead: ${r.roof.dead}, a 14 m drop dead: ${r.tall.dead}`);
   return r;
 });
 

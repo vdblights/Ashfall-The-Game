@@ -1008,9 +1008,11 @@ class Game {
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
     this.player.onSlide = () => { audio.slide(); this.player.addShake(0.05); };
+    // A fall is a share of the health bar, and a plate carrier does not
+    // break one: armour is for rounds and shrapnel.
     this.player.onFallDamage = (amount) => {
       this.player.addShake(0.4);
-      this.damagePlayer(amount, null);
+      this.damagePlayer(amount * this.player.maxHealth / 100, null, true);
     };
     this.weapons.reset();
     this.score = 0;
@@ -1915,9 +1917,9 @@ class Game {
       armour === 'heavy' || armour === 'plated', e.pos.y > DECK_HEIGHT, (this.footfallN = (this.footfallN || 0) + 1));
   }
 
-  damagePlayer(amount, fromPos) {
+  damagePlayer(amount, fromPos, unarmoured = false) {
     if (this.state !== 'playing' || this.player.dead) return;
-    amount *= EFFECT.armour[this.kit.armour];
+    if (!unarmoured) amount *= EFFECT.armour[this.kit.armour];
     const died = this.player.damage(amount, this.time);
     audio.hurt();
 
