@@ -98,6 +98,14 @@ const FINAL_FRAG = /* glsl */`
   uniform float grain;
   uniform float aberration;
   uniform float time;
+  // what the air does, when the world's depth is there to say where (see
+  // FX_* below): shafts off the sun, and the shimmer over a fire
+  uniform float fxOn;
+  uniform sampler2D tShafts;
+  uniform sampler2D tHeat;
+  uniform sampler2D tGun;
+  uniform vec3 shaftTint;
+  uniform float shaftStrength;
   varying vec2 vUv;
 
   // A pixel that is not a number, or not finite, becomes black here, and
@@ -147,11 +155,36 @@ const FINAL_FRAG = /* glsl */`
     // out near 0.5 in the corners, so this is a few pixels there and nothing
     // at the crosshair, which is the only place it would read as a fault.
     vec2 off = centred * r2 * aberration;
+
+    // The view model is the only thing in the depth by now: the world's was
+    // cleared before the gun was drawn. Nothing in the air is in front of it.
+    float gun = 0.0;
+    vec2 uv = vUv;
+    if (fxOn > 0.5) {
+      gun = texture2D(tGun, vUv).x < 0.99999 ? 1.0 : 0.0;
+      // Heat over a fire bends the light coming through it: a ripple that
+      // rises, read off the scene a little to one side. The mask already
+      // knows which pixels are behind the hot air and which are in front.
+      float heat = texture2D(tHeat, vUv).r * (1.0 - gun);
+      if (heat > 0.001) {
+        vec2 q = vUv * vec2(1.0, 1.6);
+        vec2 wob = vec2(
+          sin(q.y * 62.0 - time * 5.5 + sin(q.x * 31.0 + time * 1.1) * 1.4),
+          cos(q.y * 47.0 - time * 4.3 + q.x * 23.0) * 0.5);
+        uv += wob * heat * 0.0014;
+        // the sampled point may land on the gun: then do not bend at all
+        if (texture2D(tGun, uv).x < 0.99999) uv = vUv;
+      }
+    }
+
     vec3 color = sane(vec3(
-      texture2D(tDiffuse, vUv + off).r,
-      texture2D(tDiffuse, vUv).g,
-      texture2D(tDiffuse, vUv - off).b
+      texture2D(tDiffuse, uv + off).r,
+      texture2D(tDiffuse, uv).g,
+      texture2D(tDiffuse, uv - off).b
     ), 65000.0);
+
+    // light through the dust, behind the gun and never on it
+    if (fxOn > 0.5) color += sane(texture2D(tShafts, vUv).rgb, 64.0) * shaftTint * shaftStrength * (1.0 - gun);
 
     // sanitised again even though the bright pass already was: with the bloom
     // off these are bound to the scene itself at strength 0, and NaN * 0 is NaN
@@ -335,6 +368,94 @@ const AO_APPLY_FRAG = /* glsl */`
   }
 `;
 
+/*
+ * Two things the air does, both read off the world's own depth, so both run
+ * only where occlusion does (high and medium): drawn into the scene target
+ * before the gun, while the depth texture still holds the world.
+ *
+ * Light shafts. With a low sun at the end of half the streets and dust in
+ * every metre of air, the sky between two buildings should pour into the
+ * street, and the dust lit by it should read as beams with the buildings'
+ * shadows cut through them. Screen-space, after Mitchell (GPU Gems 3, 13):
+ * the sky that shows near the sun is the light, and blurring it outward
+ * from the sun's place on screen draws it through the air, with everything
+ * standing in front of the sky stencilled out of it. Quarter resolution,
+ * two passes of sixteen taps, so the rays it draws are 256 taps long.
+ *
+ * Heat. Over every burning drum the air shimmers, bending what is behind
+ * it: a mask of where the hot column stands, from the nearest fires, cut
+ * off wherever the world is nearer than the fire (a wall in front of a
+ * drum does not shimmer), which the final pass turns into a rising ripple.
+ */
+const FX_SKY_FRAG = /* glsl */`
+  uniform sampler2D tDiffuse;
+  uniform sampler2D tDepth;
+  uniform vec2 sun;            // the sun's place on screen, in uv
+  uniform float aspect;
+  varying vec2 vUv;
+  void main() {
+    // the sky alone is the source: anything in front of it is the shadow
+    float d = texture2D(tDepth, vUv).x;
+    if (d < 0.99999) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+    vec3 c = min(texture2D(tDiffuse, vUv).rgb, vec3(3.0));
+    vec2 v = (vUv - sun) * vec2(aspect, 1.0);
+    // most of the light is close round the disc; the rest is the bright sky
+    float near = exp(-dot(v, v) * 28.0) * 1.0 + exp(-length(v) * 4.5) * 0.35;
+    gl_FragColor = vec4(c * near, 1.0);
+  }
+`;
+
+const FX_RAYS_FRAG = /* glsl */`
+  uniform sampler2D tDiffuse;
+  uniform vec2 sun;
+  uniform float reach;         // how far toward the sun one pass looks, 0..1
+  varying vec2 vUv;
+  void main() {
+    const int N = 16;
+    vec2 step = (sun - vUv) * reach / float(N);
+    vec2 p = vUv;
+    vec3 sum = vec3(0.0);
+    float w = 1.0, ws = 0.0;
+    for (int i = 0; i < N; i++) {
+      sum += texture2D(tDiffuse, p).rgb * w;
+      ws += w;
+      w *= 0.93;
+      p += step;
+    }
+    gl_FragColor = vec4(sum / ws, 1.0);
+  }
+`;
+
+const FX_HEAT_FRAG = /* glsl */`
+  uniform sampler2D tDepth;
+  uniform float cameraNear;
+  uniform float cameraFar;
+  uniform float aspect;
+  uniform vec4 fireA[4];       // base u, base v, top v, half width (u)
+  uniform float fireZ[4];      // how far in front of the camera, 0 for none
+  varying vec2 vUv;
+  void main() {
+    float d = texture2D(tDepth, vUv).x;
+    float viewZ = d >= 0.99999 ? 1e6
+      : (cameraNear * cameraFar) / ((cameraFar - cameraNear) * d - cameraFar) * -1.0;
+    float heat = 0.0;
+    for (int i = 0; i < 4; i++) {
+      if (fireZ[i] <= 0.0) continue;
+      vec4 f = fireA[i];
+      // in front of the hot air, nothing bends
+      if (viewZ < fireZ[i] - 0.4) continue;
+      float h = (vUv.y - f.y) / max(f.z - f.y, 1e-4);
+      if (h < 0.0 || h > 1.0) continue;
+      // the column widens a little as it rises, and sways
+      float x = (vUv.x - f.x) / (f.w * (1.0 + h * 0.8));
+      float across = 1.0 - smoothstep(0.1, 1.0, abs(x));
+      float up = smoothstep(0.0, 0.3, h) * (1.0 - smoothstep(0.4, 1.0, h));
+      heat = max(heat, across * up);
+    }
+    gl_FragColor = vec4(heat, 0.0, 0.0, 1.0);
+  }
+`;
+
 const passMaterial = (fragmentShader, uniforms) => new THREE.ShaderMaterial({
   uniforms, vertexShader: VERT, fragmentShader,
   depthTest: false, depthWrite: false,
@@ -376,7 +497,17 @@ export class Post {
       grain: { value: 0.01 },
       aberration: { value: 0.012 },
       time: { value: 0 },
+      fxOn: { value: 0 },
+      tShafts: { value: null },
+      tHeat: { value: null },
+      tGun: { value: null },
+      // the sun's own gold, a little cooled by the dust it is lighting
+      shaftTint: { value: new THREE.Vector3(1.0, 0.8, 0.6) },
+      shaftStrength: { value: 0 },
     });
+    // built with the occlusion's, on first use and inside a reserve
+    this.fxMats = null;
+    this.fx = null;
   }
 
   /**
@@ -471,8 +602,81 @@ export class Post {
         this.targets.ao = rt(half.w, half.h, near);
         this.targets.aoTmp = rt(half.w, half.h, near);
         if (!this.aoMats) this.aoMats = this._buildAOMaterials();
+        this.targets.sky = rt(quarter.w, quarter.h);
+        this.targets.rays = rt(quarter.w, quarter.h);
+        this.targets.heat = rt(quarter.w, quarter.h);
+        if (!this.fxMats) this.fxMats = this._buildFxMaterials();
       }
     });
+  }
+
+  _buildFxMaterials() {
+    const fireA = [0, 1, 2, 3].map(() => new THREE.Vector4());
+    return {
+      sky: passMaterial(FX_SKY_FRAG, {
+        tDiffuse: { value: null },
+        tDepth: { value: null },
+        sun: { value: new THREE.Vector2() },
+        aspect: { value: 1 },
+      }),
+      rays: passMaterial(FX_RAYS_FRAG, {
+        tDiffuse: { value: null },
+        sun: { value: new THREE.Vector2() },
+        reach: { value: 0.5 },
+      }),
+      heat: passMaterial(FX_HEAT_FRAG, {
+        tDepth: { value: null },
+        cameraNear: { value: 0.06 },
+        cameraFar: { value: 600 },
+        aspect: { value: 1 },
+        fireA: { value: fireA },
+        fireZ: { value: [0, 0, 0, 0] },
+      }),
+    };
+  }
+
+  /**
+   * Shafts and heat, off the world's depth before the gun is drawn. `fx` is
+   * what the game hands over each frame: where the sun is on screen and how
+   * much of it to draw, and the fires nearest the camera, already projected.
+   * Every pass runs every frame whatever is on screen, so each program is
+   * built at boot and none is built the first time the sun comes into view.
+   */
+  _air(camera) {
+    const t = this.targets, m = this.fxMats, fx = this.fx;
+    const depth = t.scene.depthTexture;
+    const aspect = this.width / Math.max(1, this.height);
+    const sun = fx?.sun || { x: 0.5, y: 2, strength: 0 };
+
+    const k = m.sky.uniforms;
+    k.tDiffuse.value = t.scene.texture;
+    k.tDepth.value = depth;
+    k.sun.value.set(sun.x, sun.y);
+    k.aspect.value = aspect;
+    this._draw(m.sky, t.sky);
+
+    const r = m.rays.uniforms;
+    r.sun.value.set(sun.x, sun.y);
+    r.tDiffuse.value = t.sky.texture;
+    r.reach.value = 0.62;
+    this._draw(m.rays, t.rays);
+    r.tDiffuse.value = t.rays.texture;
+    r.reach.value = 0.22;
+    this._draw(m.rays, t.sky);
+
+    const h = m.heat.uniforms;
+    h.tDepth.value = depth;
+    h.cameraNear.value = camera.near;
+    h.cameraFar.value = camera.far;
+    h.aspect.value = aspect;
+    const fires = fx?.fires || [];
+    for (let i = 0; i < 4; i++) {
+      const f = fires[i];
+      h.fireZ.value[i] = f ? f.z : 0;
+      if (f) h.fireA.value[i].set(f.u, f.v0, f.v1, f.w);
+    }
+    this._draw(m.heat, t.heat);
+    return sun.strength;
   }
 
   _buildAOMaterials() {
@@ -574,6 +778,7 @@ export class Post {
     r.clear();
     r.render(scene, camera);
     if (this.ao) this._occlude(camera);
+    const shafts = this.ao ? this._air(camera) : 0;
     r.setRenderTarget(t.scene);
     r.clearDepth();
     r.render(viewScene, viewCamera);
@@ -603,6 +808,12 @@ export class Post {
     this.finalMat.uniforms.tBloomWide.value = this.bloom ? t.wide.texture : t.scene.texture;
     this.finalMat.uniforms.bloomStrength.value = this.bloom ? 0.62 : 0;
     this.finalMat.uniforms.time.value = time;
+    const f = this.finalMat.uniforms;
+    f.fxOn.value = this.ao ? 1 : 0;
+    f.tShafts.value = this.ao ? t.sky.texture : t.scene.texture;
+    f.tHeat.value = this.ao ? t.heat.texture : t.scene.texture;
+    f.tGun.value = this.ao ? t.scene.depthTexture : t.scene.texture;
+    f.shaftStrength.value = shafts;
     this._draw(this.finalMat, null);
   }
 
