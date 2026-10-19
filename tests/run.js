@@ -8066,6 +8066,200 @@ check('a hostile faces you, and holds its weapon in both hands', async (page) =>
   return r;
 });
 
+check('a hostile flinches where it is hit, staggers under a heavy blow, and falls the way it died', async (page) => {
+  // A hostile used to take every hit the same way, a nod of the upper body
+  // on one spring, and every death the same way too: the knees went and it
+  // tipped over the way the round was going, on the spot, gun still in its
+  // hands. A grenade moved it by setting its position, through no collider.
+  //
+  // Now where a hit lands decides what it moves (`_react`): a headshot
+  // snaps the head, a round to the leg gives that knee. A heavy blow — a
+  // shotgun at close range, a blast — staggers it (`_stagger`): it stumbles
+  // the way it was hit and fires nothing until it has its feet. And how it
+  // dies decides how it falls (`_fall`): a headshot drops it where it stands,
+  // a round to the body knocks it back a step, a blast throws it, and a wall
+  // behind it is one it slumps against rather than lies through. Its gun
+  // falls out of its hands to the ground.
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.startRun();
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; g.waveHpScale = 1;
+    g.damagePlayer = () => {};
+    const V = g.player.position.constructor;
+    const a = new V(), b = new V();
+    const step = (s, each) => { for (let t = 0; t < s - 1e-9; t += 1 / 60) { g.time += 1 / 60; g.step(1 / 60); each?.(); } };
+    const { target: spot, px, pz } = window.__place(12);
+    const stand = (key, x = spot.x, z = spot.z) => {
+      g.player.reset(px, pz);
+      const e = g.spawnEnemy(key);
+      e.pos.set(x, g.world.groundHeight(x, z, 0.12, 99), z);
+      e.group.position.copy(e.pos);
+      e.alert(g.time, 0);
+      e.strafe = 0; e.strafeTimer = 1e9; e.frags = 0;
+      e.type = { ...e.type, speed: 0 };   // hold where it stands
+      e.vel.set(0, 0, 0);
+      step(0.5);
+      return e;
+    };
+    const hit = (e, part, dmg, zone, n = 1, force = 0) => {
+      part.getWorldPosition(a);
+      const d = b.copy(a).sub(g.player.position).normalize().clone();
+      for (let i = 0; i < n; i++) e.damage(dmg, zone, d, a.clone(), force);
+      return d;
+    };
+    const gone = (e) => { e.alive = false; e.group.visible = false; };
+    const out = {};
+
+    // ---- where a hit lands: the head snaps, a knee gives
+    let e = stand('brute');
+    let base = 0, peak = 0;
+    step(0.15, () => { base = Math.max(base, Math.abs(e.parts.neck.rotation.x - e.aimPitch * 0.6)); });
+    hit(e, e.parts.head, 12, 'head');
+    step(0.15, () => { peak = Math.max(peak, Math.abs(e.parts.neck.rotation.x - e.aimPitch * 0.6)); });
+    out.headSnap = +(peak - base).toFixed(3);
+    step(1);
+    hit(e, e.parts.shinL, 12, 'limb');   // at the knee: the hip pivot sits on the waist line
+    let knee = 0;
+    step(0.2, () => { knee = Math.max(knee, e.parts.shinR.rotation.x - e.parts.shinL.rotation.x); });
+    out.knee = +knee.toFixed(3);
+    // a juggernaut takes a pistol round without losing its feet
+    step(2);
+    hit(e, e.parts.torso, 30, 'body');
+    out.brutePistol = e.stagger > 0;
+    gone(e);
+
+    // ---- a shotgun at close range: a stumble back, no fire, and only one
+    e = stand('raider');
+    const shots = { n: 0 };
+    const own = e._shoot.bind(e);
+    e._shoot = (...args) => { shots.n++; return own(...args); };
+    let staggers = 0;
+    const st = e._stagger.bind(e);
+    e._stagger = (...args) => { staggers++; return st(...args); };
+    e.nextFire = 0;
+    const from = e.pos.clone();
+    const dir = hit(e, e.parts.torso, 6, 'body', 9);
+    out.staggered = e.stagger > 0;
+    let during = 0;
+    step(0.3, () => { if (e.stagger > 0) during = shots.n; });
+    hit(e, e.parts.torso, 6, 'body', 9);      // a second volley inside the stagger
+    step(0.6, () => { if (e.stagger > 0) during = shots.n; });
+    out.firedStaggered = during;
+    out.staggers = staggers;
+    out.stumble = +(e.pos.clone().sub(from).setY(0).dot(dir.clone().setY(0).normalize())).toFixed(2);
+    step(2);
+    out.firesAfter = shots.n > during;
+    gone(e);
+
+    // ---- deaths, by what killed it
+    const lying = (e) => {
+      e.group.updateMatrixWorld(true);
+      return +new V(0, 1, 0).applyQuaternion(e.group.getWorldQuaternion(new THREE_Q())).y.toFixed(2);
+    };
+    const THREE_Q = g.camera.quaternion.constructor;
+    const gunRest = (e) => {
+      e.parts.weapon.getWorldPosition(a);
+      return +(a.y - g.world.groundHeight(a.x, a.z, 0.12, a.y + 0.3)).toFixed(2);
+    };
+    e = stand('raider');
+    let at = e.pos.clone();
+    hit(e, e.parts.head, 500, 'head');
+    step(2);
+    out.headshot = { moved: +e.pos.distanceTo(at).toFixed(2), up: lying(e), gun: gunRest(e) };
+
+    e = stand('raider');
+    at = e.pos.clone();
+    const d2 = hit(e, e.parts.torso, 120, 'body').setY(0).normalize();
+    step(2);
+    e.parts.head.getWorldPosition(a);
+    out.body = { back: +e.pos.clone().sub(at).dot(d2).toFixed(2), up: lying(e),
+      way: +a.sub(e.pos).setY(0).normalize().dot(d2).toFixed(2), gun: gunRest(e),
+      sunk: +(g.world.groundHeight(e.pos.x, e.pos.z, 0.12, e.pos.y + 0.5) - e._lowest()).toFixed(2) };
+
+    e = stand('raider');
+    at = e.pos.clone();
+    const blast = at.clone().add(new V(px - at.x, 0, pz - at.z).normalize().multiplyScalar(1.2));
+    blast.y = g.world.groundHeight(blast.x, blast.z, 0.12, 99) + 0.1;
+    g.explode(blast, 'player');
+    out.blastKilled = !e.alive;
+    step(2);
+    out.blast = { thrown: +e.pos.clone().sub(at).setY(0).length().toFixed(2),
+      away: +e.pos.clone().sub(at).setY(0).normalize().dot(at.clone().sub(blast).setY(0).normalize()).toFixed(2), up: lying(e) };
+
+    // a juggernaut that lives through a blast is knocked back by it
+    e = stand('brute');
+    e.hp = e.maxHp = 5000;
+    at = e.pos.clone();
+    g.explode(at.clone().add(new V(px - at.x, 0, pz - at.z).normalize().multiplyScalar(2)).setY(at.y + 0.1), 'player');
+    out.bruteBlast = e.stagger > 0;
+    gone(e);
+
+    // ---- with its back to a wall: it slumps against it, not through it.
+    // A tall square box with open, level street in front of one face, and
+    // the shooter out in front of that face.
+    let wall = null;
+    for (const box of g.world.boxes) {
+      if (wall) break;
+      if (box.sin || box.base > 0 || box.top < 4 || box.floor || box.door) continue;
+      for (const [nx, nz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const fx = nx ? (nx > 0 ? box.maxX : box.minX) : box.cx;
+        const fz = nz ? (nz > 0 ? box.maxZ : box.minZ) : box.cz;
+        const ex = fx + nx * 0.75, ez = fz + nz * 0.75, sx = fx + nx * 11, sz = fz + nz * 11;
+        if (Math.abs(sx) > g.world.bounds - 3 || Math.abs(sz) > g.world.bounds - 3) continue;
+        const y = g.world.groundHeight(ex, ez, 0.5, 99);
+        if (y > 0.35 || Math.abs(g.world.groundHeight(sx, sz, 0.5, 99) - y) > 0.35) continue;
+        if (g.world.occupied(ex, ez, 0.5, 0.6)) continue;
+        if (!g.world.lineOfSight(sx, y + 1.6, sz, ex, y + 1.2, ez) || !g.world.lineOfSight(sx, y + 1.6, sz, ex, y + 1.7, ez)) continue;
+        wall = { box, ex, ez, sx, sz, nx, nz, fx, fz };
+        break;
+      }
+    }
+    if (wall) {
+      g.player.reset(wall.sx, wall.sz);
+      e = g.spawnEnemy('raider');
+      e.pos.set(wall.ex, g.world.groundHeight(wall.ex, wall.ez, 0.12, 99), wall.ez);
+      e.group.position.copy(e.pos);
+      e.alert(g.time, 0); e.nextFire = 1e9; e.strafe = 0; e.type = { ...e.type, speed: 0 };
+      step(0.4);
+      e.pos.set(wall.ex, e.pos.y, wall.ez);
+      e.parts.torso.getWorldPosition(a);
+      e.damage(120, 'body', b.copy(a).sub(g.player.position).normalize(), a.clone());
+      let deepest = 0;
+      const into = (p) => (wall.nx ? (p.x - wall.fx) * -wall.nx : (p.z - wall.fz) * -wall.nz);
+      step(2, () => {
+        for (const part of [e.parts.head, e.parts.torso, e.parts.armL, e.parts.armR]) {
+          part.getWorldPosition(a);
+          deepest = Math.max(deepest, into(a));
+        }
+      });
+      out.wall = { deepest: +deepest.toFixed(2), slump: e.slump, up: lying(e) };
+    }
+    return out;
+  });
+  expect(r.headSnap > 0.12, `a headshot moves the head ${r.headSnap} rad more than standing still`);
+  expect(r.knee > 0.3, `a round to the left leg bends that knee only ${r.knee} rad more than the other`);
+  expect(!r.brutePistol, 'a juggernaut staggered under one pistol round');
+  expect(r.staggered, 'a close shotgun volley did not stagger a raider');
+  expect(r.firedStaggered === 0, `a staggered raider fired ${r.firedStaggered} rounds`);
+  expect(r.staggers === 1, `two volleys 0.3 s apart staggered it ${r.staggers} times`);
+  expect(r.stumble > 0.4, `the stagger carried it ${r.stumble} m the way it was hit`);
+  expect(r.firesAfter, 'it never fired again after the stagger');
+  expect(r.headshot.moved < 0.15, `a headshot body moved ${r.headshot.moved} m: it drops where it stands`);
+  expect(r.headshot.up < 0.3 && r.body.up < 0.3, `bodies are not lying down (${r.headshot.up}, ${r.body.up})`);
+  expect(r.body.sunk < 0.05, `a body lying down is ${r.body.sunk} m under the street`);
+  expect(r.body.back > 0.3, `a body shot knocked it back ${r.body.back} m`);
+  expect(r.body.way > 0.8, `a body shot laid it ${r.body.way} along the shot`);
+  expect(r.blastKilled && r.blast.thrown > 1.5 && r.blast.away > 0.8,
+    `a blast threw the body ${r.blast.thrown} m, ${r.blast.away} away from it`);
+  expect(r.bruteBlast, 'a juggernaut that lived through a blast was not knocked back');
+  expect(r.headshot.gun < 0.25 && r.body.gun < 0.25, `a dead hostile's gun is ${r.headshot.gun} / ${r.body.gun} m off the ground`);
+  expect(r.wall, 'found no wall to shoot a hostile against');
+  expect(r.wall.deepest < 0.05, `a body shot against a wall went ${r.wall.deepest} m into it`);
+  expect(r.wall.slump === 1, 'a body shot back against a wall did not slump against it');
+  return r;
+});
+
 check('every archetype is kitted, textured, and keeps its hit zones', async (page) => {
   // A hostile is read at forty metres against a dusk skyline, where its
   // colour is barely a colour — so the silhouette has to carry the archetype,

@@ -23,6 +23,8 @@ const HAND_MAG = new THREE.Vector3(), HAND_LOW = new THREE.Vector3();
 // a pouch on the left hip, in the upper body's frame: far enough from the
 // magazine that the hand's trip to it reads from across a street
 const POUCH = new THREE.Vector3(-0.26, 0.04, -0.06);
+// where the support hand goes in a stagger, out to the side for balance
+const FLUNG = new THREE.Vector3(-0.68, 0.45, -0.12);
 const smooth = (t) => t * t * (3 - 2 * t);
 
 /**
@@ -162,6 +164,37 @@ const CROUCH = { drop: 0.36, thigh: 1.1, knee: -1.9, lean: 0.22 };
  */
 const STOOP = { top: 1.9, margin: 0.06, leg: 0.86, max: 0.5, lean: 0.3, hip: 0.9 };
 
+/**
+ * A hit hard enough to knock a hostile off its line. Damage it takes is
+ * summed into `impact`, which fades by `fade` a second, so a shotgun's nine
+ * pellets or a rifle's two rounds in a tenth of a second count as one blow;
+ * past the archetype's `poise` it staggers. For `time` seconds it stumbles
+ * the way the blow went, `step` metres in all, through the same `resolve`
+ * that walks it, and fires nothing; then it cannot be staggered again for
+ * `cool`, or a shotgun would hold one on its heels for ever. A blast staggers
+ * whatever its poise, `blast` metres plus its falloff's share of `push`.
+ */
+const STAGGER = { fade: 6, time: 0.6, cool: 1.6, step: 0.7, blast: 0.4, push: 1.4, elite: 1.8, settle: 0.3 };
+
+/**
+ * How a hostile goes down, by what killed it. A headshot drops it where it
+ * stands, the knees gone before the body tips. A round to the body knocks it
+ * back a step or two the way the round was going. A blast throws it. The body
+ * is `length` long from the feet, and topples only as far as the room in
+ * front of it allows: up against a wall it slumps against it, and sits down
+ * if it went over backwards.
+ */
+const DEATH = { gravity: 18, friction: 4, length: 1.7, slump: 1.2, throw: 7, lift: 4.5, gunKick: 1.4 };
+const DEATH_P = new THREE.Vector3(), DEATH_S = new THREE.Vector3(1, 1, 1);
+const DEATH_Q = new THREE.Quaternion(), DEATH_E = new THREE.Euler();
+const M4_B = new THREE.Matrix4();
+// what a body lies on: every part of it but the gun, which has gone
+const LYING = ['torso', 'head', 'armL', 'armR', 'foreL', 'foreR', 'legL', 'legR', 'shinL', 'shinR', 'skirt'];
+const HIT = new THREE.Vector3();
+
+/** One damped spring, kicked by a hit and pulled back to rest. */
+const settle = (s, dt, k = 60, c = 9) => { s.v += (-k * s.x - c * s.v) * dt; s.x += s.v * dt; };
+
 /** The crown of a body stooped as far as it goes, in metres. */
 const stoopedHeight = (e) => (STOOP.top - STOOP.max + STOOP.margin) * e.group.scale.x;
 
@@ -187,32 +220,32 @@ const bodyHeight = (e) => (e.stair ? Math.min(1.9 * e.type.scale, stoopedHeight(
  */
 export const ENEMY_TYPES = {
   scavenger: {
-    name: 'SCAVENGER', hp: 65, speed: 4.6, scale: 0.95, melee: true,
+    name: 'SCAVENGER', hp: 65, poise: 30, speed: 4.6, scale: 0.95, melee: true,
     damage: 14, rate: 1.0, preferred: 1.6, accuracy: 1, color: 0x8a9c62, accent: 0xb07a42,
     score: 100, detect: 55, marker: 0xd8452f,
     kit: { head: 'hood', armour: 'scrap', coat: 0.26, weapon: 'hook' },
   },
   raider: {
-    name: 'RAIDER', hp: 110, speed: 3.0, scale: 1.0, melee: false,
+    name: 'RAIDER', hp: 110, poise: 45, speed: 3.0, scale: 1.0, melee: false,
     damage: 6, rate: 0.16, burst: 3, burstPause: 2.4, preferred: 13, accuracy: 0.085, mag: 30, reload: 2.2, frags: 1,
     color: 0x66788a, accent: 0x3f4750, score: 150, detect: 65, sound: 'rifle', marker: 0xe8a33a,
     kit: { head: 'helm', armour: 'carrier', coat: 0, weapon: 'rifle' },
   },
   shotgunner: {
-    name: 'BREAKER', hp: 170, speed: 3.6, scale: 1.08, melee: false,
+    name: 'BREAKER', hp: 170, poise: 75, speed: 3.6, scale: 1.08, melee: false,
     damage: 5, pellets: 6, rate: 1.15, preferred: 6, accuracy: 0.14, falloff: 16, mag: 6, reload: 2.6, shells: 4, frags: 1,
     color: 0x9a7550, accent: 0x53412f, score: 200, detect: 50, sound: 'shotgun', marker: 0x3fa9d8,
     kit: { head: 'visor', armour: 'heavy', coat: 0, weapon: 'shotgun' },
   },
   marksman: {
-    name: 'MARKSMAN', hp: 90, speed: 2.4, scale: 1.0, melee: false,
+    name: 'MARKSMAN', hp: 90, poise: 40, speed: 2.4, scale: 1.0, melee: false,
     damage: 26, rate: 2.9, preferred: 26, accuracy: 0.022, detect: 95, mag: 5, reload: 2.4,
     color: 0x5c6f5a, accent: 0x2f3a30, score: 250, sound: 'rifle', marker: 0x7ce04a,
     laser: true, perch: true,
     kit: { head: 'hood', armour: 'light', coat: 0.34, weapon: 'long' },
   },
   brute: {
-    name: 'JUGGERNAUT', hp: 420, speed: 2.4, scale: 1.35, melee: false,
+    name: 'JUGGERNAUT', hp: 420, poise: 140, speed: 2.4, scale: 1.35, melee: false,
     damage: 7, rate: 0.13, burst: 6, burstPause: 2.8, preferred: 9, accuracy: 0.105, mag: 60, reload: 3.2, frags: 1,
     color: 0x7d5a5a, accent: 0x3a3533, score: 400, detect: 70, sound: 'smg', marker: 0xb03be0,
     kit: { head: 'helm', armour: 'plated', coat: 0, weapon: 'drum' },
@@ -221,7 +254,7 @@ export const ENEMY_TYPES = {
   // out of the wave count, the player's fire and every hostile's attention
   // but the drain `objectives.js` applies; it follows the player once freed.
   holdout: {
-    name: 'HOLDOUT', hp: 120, speed: 4.4, scale: 0.95, melee: false, friendly: true,
+    name: 'HOLDOUT', hp: 120, poise: 40, speed: 4.4, scale: 0.95, melee: false, friendly: true,
     damage: 0, rate: 1, preferred: 2, accuracy: 1, color: 0x8d8574, accent: 0x5a4c3a,
     score: 0, detect: 0, marker: 0x9cf0c0,
     // the lenses every hostile glows red through are the band's mint on
@@ -1119,6 +1152,27 @@ export class Enemy {
     this.aimT = 0;            // 0 at low ready, 1 shouldered
     this.kick = 0;            // recoil, decaying
     this.flinch = { x: 0, z: 0, vx: 0, vz: 0 };   // a spring, kicked by hits
+    // where a hit lands decides what it moves: the shoulders turn under an
+    // off-centre round, the head snaps under a headshot, a knee gives under
+    // a round to the leg and the gun is knocked off line by one to the arm
+    this.react = {
+      twist: { x: 0, v: 0 }, headX: { x: 0, v: 0 }, headZ: { x: 0, v: 0 },
+      kneeL: { x: 0, v: 0 }, kneeR: { x: 0, v: 0 }, gunX: { x: 0, v: 0 }, gunZ: { x: 0, v: 0 },
+    };
+    this.impact = 0;          // damage taken lately, fading (see STAGGER)
+    this.stagger = 0;         // seconds of stumble left
+    this.staggerFor = STAGGER.time;
+    this.staggerUntil = 0;    // no second stagger before this
+    this.staggerDir = { x: 0, z: 0 };
+    this.staggerPush = 0;     // metres the stumble covers
+    this.deathHow = 'shot';
+    this.deathVel = { x: 0, y: 0, z: 0 };
+    this.airborne = false;
+    this.fallMax = Math.PI / 2;
+    this.slump = 0;           // 1 sat against a wall it fell back onto
+    this.landedAt = -1;
+    this.gunDrop = null;
+    this.parts.weapon.scale.setScalar(1);
     this.idleT = Math.random() * 6.28;
     this.aimPitch = 0;
     this.group.visible = true;
@@ -1232,14 +1286,20 @@ export class Enemy {
     this.heardUntil = time + 2.5;
   }
 
-  /** @returns {'kill'|'hit'|null} */
-  damage(amount, zone, fromDir, point) {
+  /**
+   * `force` is a blast's share of its full strength at this distance, 0 for
+   * a round or a blow.
+   * @returns {'kill'|'hit'|null}
+   */
+  damage(amount, zone, fromDir, point, force = 0) {
     if (!this.alive) return null;
     let dmg = amount;
     if (zone === 'head') dmg *= 1;      // multiplier already applied by shooter
     else if (zone === 'limb') dmg *= 0.75;
     this.hp -= dmg;
     this.hurtFlash = 0.12;
+    this.impact += dmg;
+    const time = this.game.time;
     // the shot shoves the upper body the way it was travelling, in the
     // body's own frame: a spring takes it back over a few tenths of a second
     if (fromDir) {
@@ -1248,18 +1308,63 @@ export class Enemy {
       const hard = Math.min(1.6, 0.5 + dmg / 40) * (zone === 'head' ? 1.5 : 1);
       this.flinch.vx += lz * 4.5 * hard;
       this.flinch.vz -= lx * 4.5 * hard;
+      if (point) this._react(zone, lx, lz, hard, point, time);
     }
-    this.alert(this.game.time, 0.35);
+    this.alert(time, 0.35);
     this.game.effects.blood(point, fromDir);
     if (this.hp <= 0) {
-      this.die(fromDir);
+      this.die(fromDir, force > 0 ? 'blast' : zone === 'head' ? 'head' : 'shot', force, dmg);
       return 'kill';
+    }
+    // knocked off its line: by a blast always, by rounds past its poise
+    const poise = (this.type.poise || 50) * (this.elite ? STAGGER.elite : 1);
+    if (fromDir && !this.type.friendly && !this.mantle && time >= this.staggerUntil
+        && (force > 0 || this.impact >= poise)) {
+      this._stagger(fromDir, force > 0 ? STAGGER.blast + STAGGER.push * force : STAGGER.step, time);
     }
     audio.flesh(point || this.pos);
     return 'hit';
   }
 
-  die(fromDir) {
+  /**
+   * What a hit moves, by where it lands. Read in the body's own frame, so a
+   * round to the right shoulder turns the shoulders the way a push there
+   * would: the turn is the hit's lever about the spine, `r × F`.
+   */
+  _react(zone, lx, lz, hard, point, time) {
+    const R = this.react;
+    const h = this.group.worldToLocal(HIT.copy(point));
+    R.twist.v += (h.z * lx - h.x * lz) * 9 * hard;
+    if (zone === 'head') {
+      R.headX.v += lz * 10 * hard;
+      R.headZ.v -= lx * 10 * hard;
+    } else if (zone === 'limb' && h.y < AT.waist[1]) {
+      (h.x < 0 ? R.kneeL : R.kneeR).v += 9 * hard;
+    } else if (zone === 'limb') {
+      // the gun arm, or the one under the handguard: the muzzle is knocked
+      // up and aside, and the next round waits for it to come back on
+      R.gunX.v += 6 * hard;
+      R.gunZ.v += (h.x < 0 ? -1 : 1) * 6 * hard;
+      this.nextFire = Math.max(this.nextFire, time + 0.3);
+    }
+  }
+
+  /** A stumble the way the blow went, `push` metres of it (see STAGGER). */
+  _stagger(dir, push, time) {
+    const l = Math.hypot(dir.x, dir.z) || 1;
+    this.staggerDir.x = dir.x / l;
+    this.staggerDir.z = dir.z / l;
+    this.staggerPush = push;
+    this.staggerFor = STAGGER.time * Math.min(1.5, 0.8 + push / 3);
+    this.stagger = this.staggerFor;
+    this.staggerUntil = time + this.staggerFor + STAGGER.cool;
+    this.impact = 0;
+    this.burstLeft = 0;
+    this.swingT = 0;
+    this.nextFire = Math.max(this.nextFire, time + this.staggerFor + STAGGER.settle);
+  }
+
+  die(fromDir, how = 'shot', force = 0, dmg = 0) {
     // killed halfway up a wall: fall to whatever is under it, not hang there
     if (this.mantle) {
       this.mantle = null;
@@ -1268,10 +1373,200 @@ export class Enemy {
     this.alive = false;
     this.state = 'dead';
     this.deathT = 0;
+    this.stagger = 0;
     this.vel.set(0, 0, 0);
-    this.fallDir = Math.atan2(fromDir ? fromDir.x : 0, fromDir ? fromDir.z : 1);
+    this.deathHow = how;
+    // a hash of the body, not the seeded stream: which way it twists as it
+    // goes is a look, and a look must not move the next spawn
+    const wob = ((this.group.id * 2654435761) >>> 0) / 4294967296 - 0.5;
+    const dx = fromDir ? fromDir.x : 0, dz = fromDir ? fromDir.z : 1, dl = Math.hypot(dx, dz) || 1;
+    const yaw = this.group.rotation.y;
+    // a headshot crumples it forward, over its own feet, turned a little
+    this.fallDir = how === 'head' ? yaw + Math.PI + wob * 1.4 : Math.atan2(dx, dz) + wob * 0.5;
+    const dv = this.deathVel;
+    const run = how === 'blast' ? 2 + DEATH.throw * force : how === 'shot' ? Math.min(2.6, 0.7 + dmg / 50) : 0;
+    dv.x = (dx / dl) * run; dv.z = (dz / dl) * run;
+    dv.y = how === 'blast' ? 1.5 + DEATH.lift * force : 0;
+    this.airborne = dv.y > 0;
+    this.landedAt = -1;
+    this._roomToFall(run);
+    this._dropGun();
     this.game.effects.gib(V1.copy(this.pos).setY(this.pos.y + 1.2));
     audio.flesh(V1);
+  }
+
+  /**
+   * How far over the body can go before it meets something. Asked once, at
+   * the chest, out past where its slide will end: a wall a metre behind a
+   * hostile shot from the front is a wall it slumps against, not one its
+   * head goes through. Sat down against it, if it went over backwards.
+   */
+  _roomToFall(run) {
+    const world = this.game.world, s = this.group.scale.x;
+    const fx = Math.sin(this.fallDir), fz = Math.cos(this.fallDir);
+    // what friction leaves of the run, and what it covers in the air before that
+    const slide = run / DEATH.friction + run * 2 * this.deathVel.y / DEATH.gravity;
+    const y = this.pos.y + 0.9 * s, reach = slide + DEATH.length * s;
+    let free = Infinity;   // nothing in the way: all the way over
+    for (let d = 0.25; d <= reach + 0.25 + 1e-6; d += 0.25) {
+      if (!world.lineOfSight(this.pos.x, y, this.pos.z, this.pos.x + fx * d, y, this.pos.z + fz * d)) { free = d - 0.25; break; }
+    }
+    // the slide stops at the wall too, a body's width short of it
+    const room = free - Math.min(slide, Math.max(0, free - 0.35));
+    const over = (L) => Math.asin(THREE.MathUtils.clamp((room - 0.15) / (L * s), 0, 1));
+    this.fallMax = over(DEATH.length);
+    const back = Math.cos(this.fallDir - this.group.rotation.y) > 0.3;
+    this.slump = this.fallMax < DEATH.slump && back ? 1 : 0;
+    if (this.slump) {
+      // sat where the slide leaves it, a body's width off the wall, and
+      // leaning back only until its shoulders meet it
+      const end = Math.max(0.35, free + 0.125 - slide);
+      this.fallMax = Math.min(Math.asin(THREE.MathUtils.clamp((end - 0.25) / (DEATH.length * s), 0, 1)), 0.5);
+    }
+  }
+
+  /** The gun leaves the hand and falls as a thing of its own (see `_fallGun`). */
+  _dropGun() {
+    const w = this.parts.weapon;
+    this.group.updateMatrixWorld(true);
+    const d = this.gunDrop = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: 1, landed: false,
+      v: new THREE.Vector3(), spin: new THREE.Vector3() };
+    w.matrixWorld.decompose(d.p, d.q, DEATH_S);
+    d.s = DEATH_S.x;
+    // out of the right hand, to the right, with some of the body's way on it
+    const yaw = this.group.rotation.y;
+    const side = DEATH.gunKick * (this.deathHow === 'blast' ? 2 : 1);
+    d.v.set(Math.cos(yaw) * side + this.deathVel.x * 0.7, 1.2 + this.deathVel.y * 0.5, -Math.sin(yaw) * side + this.deathVel.z * 0.7);
+    const wob = ((this.group.id * 40503) % 997) / 997 - 0.5;
+    d.spin.set(3 + 4 * wob, 2 * wob, 5 - 3 * wob);
+  }
+
+  /**
+   * A body going down, by what killed it (see DEATH). The knees go first,
+   * then it follows the killing shot over: about the body's own axes
+   * (`rotation.order` is YXZ), so the shot's direction is taken into the
+   * body's frame before it is used. It slides, or flies, by the same
+   * `resolve` that walked it, so a body thrown at a wall stops at the wall.
+   */
+  _fall(dt, world) {
+    this.deathT += dt;
+    const P = this.parts, T = this.deathT, how = this.deathHow, s = this.group.scale.x;
+
+    // ---- the feet: thrown, knocked back a step, or nowhere
+    const dv = this.deathVel;
+    if (T < 3 && (this.airborne || Math.abs(dv.x) + Math.abs(dv.z) > 0.02)) {
+      this.pos.x += dv.x * dt; this.pos.z += dv.z * dt;
+      world.resolve(this.pos, 0.3 * s, this.pos.y, 0.3, 0.6 * s);
+      world.clampToBounds(this.pos, 0.3);
+      const ground = world.groundHeight(this.pos.x, this.pos.z, SUPPORT_RADIUS, this.pos.y + 0.4);
+      if (this.airborne) {
+        dv.y -= DEATH.gravity * dt;
+        this.pos.y += dv.y * dt;
+        if (this.pos.y <= ground) { this.pos.y = ground; dv.y = 0; this.airborne = false; }
+      } else {
+        const k = Math.max(0, 1 - DEATH.friction * dt);
+        dv.x *= k; dv.z *= k;
+        // off a kerb or a roof's edge, it drops
+        if (ground < this.pos.y - 0.1) this.airborne = true;
+        else this.pos.y = ground;
+      }
+    }
+
+    // ---- the knees, then the body
+    const buckleIn = how === 'head' ? 0.16 : how === 'blast' ? 0.2 : 0.3;
+    const buckle = Math.min(1, T / buckleIn);
+    const kb = buckle * buckle * (3 - 2 * buckle);
+    const sat = this.slump;
+    // the knees go first and the legs straighten out as the body comes down
+    const start = how === 'head' ? 0.16 : how === 'blast' ? 0 : 0.1, span = how === 'head' ? 0.5 : how === 'blast' ? 0.3 : 0.6;
+    const t = THREE.MathUtils.clamp((T - start) / span, 0, 1);
+    for (const [thigh, shin] of [[P.legL, P.shinL], [P.legR, P.shinR]]) {
+      // thrown, the legs trail; sat against a wall, they are out in front
+      const legs = (how === 'blast' ? 0.3 : 1) * (1 - 0.75 * t * t);
+      thigh.rotation.set(THREE.MathUtils.lerp(0.75 * legs, 1.45, sat) * kb, 0, 0);
+      shin.rotation.set(THREE.MathUtils.lerp(-1.5 * legs, -0.25, sat) * kb, 0, 0);
+    }
+    let fall = Math.sin(t * Math.PI * 0.5) * this.fallMax;
+    // it hits the ground and gives a little bounce before it lies still
+    if (t >= 1 && !this.airborne) {
+      if (this.landedAt < 0) this.landedAt = T;
+      const u = T - this.landedAt;
+      fall -= Math.min(this.fallMax, 0.12) * Math.exp(-u * 7) * Math.abs(Math.sin(u * 16));
+    }
+    const a = this.fallDir - this.group.rotation.y;
+    this.group.rotation.x = Math.cos(a) * fall;
+    this.group.rotation.z = -Math.sin(a) * fall;
+    // the upper body folds the way it is falling; a headshot folds it forward
+    // sat against a wall it slumps forward off it, chin on its chest
+    const lean = how === 'head' ? -0.45 : Math.cos(a) * 0.35;
+    P.upper.rotation.set(THREE.MathUtils.lerp(lean, -0.35, sat) * kb, 0.15 * Math.sin(a) * kb, 0);
+    // the head goes loose and rolls with it
+    P.neck.rotation.set(THREE.MathUtils.lerp(0.4 * Math.cos(a), -0.6, sat) * kb, 0, -0.5 * Math.sin(a) * kb, 'YXZ');
+    // and the arms: thrown out by a blast, slack otherwise
+    const flail = how === 'blast' ? 1 : 0;
+    for (const [arm, fore, side] of [[P.armL, P.foreL, -1], [P.armR, P.foreR, 1]]) {
+      arm.rotation.set((-0.3 - 1.0 * flail) * kb, 0, side * (0.5 + 0.9 * flail) * kb);
+      fore.rotation.set((-0.6 + 0.4 * flail) * kb, 0, 0);
+    }
+    // and it rests on whatever part of it is lowest: the feet while it
+    // stands, the knees as they go, its back or its face once it is down.
+    // A fixed drop for the knees put a body lying flat half under the street.
+    this.group.position.copy(this.pos);
+    this.group.updateMatrixWorld(true);
+    this.group.position.y += this.pos.y + 0.02 * s - this._lowest();
+    if (P.shadow) P.shadow.material.opacity = 0.75 * Math.max(0, 1 - T);
+    if (T > 6) {
+      const k = Math.max(0, 1 - (T - 6) / 1.5);
+      this.group.scale.setScalar(this.type.scale * k);
+      if (k <= 0.01) this.group.visible = false;
+    }
+    if (this.gunDrop) this._fallGun(dt, world);
+    this.group.updateMatrixWorld(true);
+  }
+
+  /** The lowest point of the body as it is posed now, off each part's box. */
+  _lowest() {
+    let low = Infinity;
+    for (const k of LYING) {
+      const m = this.parts[k];
+      if (!m?.geometry) continue;
+      const g = m.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const b = g.boundingBox, e = m.matrixWorld.elements;
+      for (let i = 0; i < 8; i++) {
+        const x = i & 1 ? b.max.x : b.min.x, y = i & 2 ? b.max.y : b.min.y, z = i & 4 ? b.max.z : b.min.z;
+        low = Math.min(low, e[1] * x + e[5] * y + e[9] * z + e[13]);
+      }
+    }
+    return low;
+  }
+
+  /**
+   * The dropped gun, in the world: it falls, tumbles, lands and lies on its
+   * side, and is written back into the body's frame each step, because it is
+   * still the body's part and the batch draws it from there.
+   */
+  _fallGun(dt, world) {
+    const d = this.gunDrop, w = this.parts.weapon;
+    if (!d.landed && this.deathT < 4) {
+      d.v.y -= DEATH.gravity * dt;
+      const ox = d.p.x, oy = d.p.y, oz = d.p.z;
+      d.p.addScaledVector(d.v, dt);
+      if (!world.lineOfSight(ox, oy, oz, d.p.x, oy, d.p.z)) { d.p.x = ox; d.p.z = oz; d.v.x *= -0.2; d.v.z *= -0.2; }
+      DEATH_Q.setFromEuler(DEATH_E.set(d.spin.x * dt, d.spin.y * dt, d.spin.z * dt, 'XYZ'));
+      d.q.multiply(DEATH_Q);
+      const ground = world.groundHeight(d.p.x, d.p.z, SUPPORT_RADIUS, oy + 0.3) + 0.04 * d.s;
+      if (d.p.y <= ground) { d.p.y = ground; d.landed = true; }
+    } else if (d.landed) {
+      // on its side, the way it was pointing
+      const fwd = DEATH_P.set(0, 0, -1).applyQuaternion(d.q);
+      DEATH_Q.setFromEuler(DEATH_E.set(0, Math.atan2(-fwd.x, -fwd.z), Math.PI / 2, 'YXZ'));
+      d.q.slerp(DEATH_Q, Math.min(1, dt * 12));
+    }
+    this.group.updateMatrixWorld(true);
+    M4_B.compose(d.p, d.q, DEATH_S.setScalar(d.s));
+    M4.copy(this.group.matrixWorld).invert().multiply(M4_B);
+    M4.decompose(w.position, w.quaternion, w.scale);
   }
 
   /**
@@ -1521,40 +1816,12 @@ export class Enemy {
 
   update(dt, time, player, world) {
     if (!this.alive) {
-      this.deathT += dt;
-      // The knees go first, then the body follows the killing shot down. The
-      // topple is about the body's own axes (`rotation.order` is YXZ), so the
-      // shot's direction is taken into the body's frame before it is used.
-      const P = this.parts;
-      const buckle = Math.min(1, this.deathT / 0.28);
-      const kb = buckle * buckle * (3 - 2 * buckle);
-      for (const [thigh, shin] of [[P.legL, P.shinL], [P.legR, P.shinR]]) {
-        thigh.rotation.x = 0.75 * kb;
-        shin.rotation.x = -1.5 * kb;
-      }
-      const t = THREE.MathUtils.clamp((this.deathT - 0.12) / 0.6, 0, 1);
-      const fall = Math.sin(t * Math.PI * 0.5) * (Math.PI / 2);
-      const a = this.fallDir - this.group.rotation.y;
-      this.group.rotation.x = Math.cos(a) * fall;
-      this.group.rotation.z = -Math.sin(a) * fall;
-      // the arms go slack and the upper body folds the way it is falling
-      P.upper.rotation.x = Math.cos(a) * 0.35 * kb;
-      for (const [arm, fore, side] of [[P.armL, P.foreL, -1], [P.armR, P.foreR, 1]]) {
-        arm.rotation.set(-0.3 * kb, 0, side * 0.5 * kb);
-        fore.rotation.set(-0.6 * kb, 0, 0);
-      }
-      // killed stooped under a ceiling, it goes down from there, not from full height
-      this.group.position.y = this.pos.y - 0.42 * kb - this.stoop * this.group.scale.x * (1 - kb);
-      if (this.parts.shadow) this.parts.shadow.material.opacity = 0.75 * Math.max(0, 1 - this.deathT);
-      if (this.deathT > 6) {
-        const k = Math.max(0, 1 - (this.deathT - 6) / 1.5);
-        this.group.scale.setScalar(this.type.scale * k);
-        if (k <= 0.01) this.group.visible = false;
-      }
+      this._fall(dt, world);
       return;
     }
 
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
+    this.impact *= Math.max(0, 1 - STAGGER.fade * dt);
     if (this.type.friendly) { this._follow(dt, player, world); return; }
 
     const toPlayer = V1.copy(player.position).sub(this.pos);
@@ -1697,7 +1964,7 @@ export class Enemy {
     // Only one already coming for you: a raider strafing at its range, or
     // backing off to hold it, has no business charging a car.
     let climbing = false;
-    if (this.alerted && !onPerch && !inShaft && !this.flee && !lured && moveDir.dot(toPlayer) > 0.7 * moveDir.length()
+    if (this.alerted && !onPerch && !inShaft && !this.flee && !lured && this.stagger <= 0 && moveDir.dot(toPlayer) > 0.7 * moveDir.length()
         && player.feetY > this.pos.y + CLIMB.above && dist < CLIMB.near) {
       const ahead = world.mantleTarget(this.pos.x, this.pos.z, this.radius, this.pos.y,
         toPlayer.x, toPlayer.z, CLIMB.min, CLIMB.max, 1.8 + this.radius);
@@ -1803,7 +2070,18 @@ export class Enemy {
     }
 
     const speed = this.type.speed * (this.alerted || escorting ? 1 : 0.45) * (pushing ? PUSH.haste : 1) * (this.flee ? CAST.pace : 1);
-    this.vel.lerp(V3.copy(moveDir).multiplyScalar(speed), Math.min(1, dt * 6));
+    if (this.stagger > 0) {
+      // A stumble: the feet go where the blow sent them, fastest at first,
+      // and never off an edge — a marksman knocked back on a roof stays on it.
+      const v = (2 * this.staggerPush / this.staggerFor) * (this.stagger / this.staggerFor);
+      const sd = this.staggerDir;
+      this.vel.set(sd.x * v, 0, sd.z * v);
+      const k = this.radius + 0.35;
+      if (world.groundHeight(this.pos.x + sd.x * k, this.pos.z + sd.z * k, SUPPORT_RADIUS, this.pos.y + 0.05) < this.pos.y - 0.55) this.vel.set(0, 0, 0);
+      this.stagger = Math.max(0, this.stagger - dt);
+    } else {
+      this.vel.lerp(V3.copy(moveDir).multiplyScalar(speed), Math.min(1, dt * 6));
+    }
     this.pos.addScaledVector(this.vel, dt);
     world.resolve(this.pos, this.radius, this.pos.y, 0.55, bodyHeight(this));
     world.clampToBounds(this.pos, this.radius);
@@ -1873,7 +2151,7 @@ export class Enemy {
     // At a player who has gone to ground — out of sight for a few seconds,
     // or inside a building — from the second wave on. One hostile grenade
     // in the air at a time, and a gap after it, so each one is a warning.
-    if (this.frags > 0 && this.alerted && !onPerch && !inShaft && !this.mantle && this.reloadT <= 0
+    if (this.frags > 0 && this.alerted && !onPerch && !inShaft && !this.mantle && this.reloadT <= 0 && this.stagger <= 0
         && time >= this.nextThrow && dist > THROW.minRange && dist < THROW.maxRange
         && (game.wave || 0) >= 2 && !player.dead
         && (this.blindFor > THROW.blind || game.playerRoom)
@@ -1893,7 +2171,7 @@ export class Enemy {
     }
 
     // ---- shooting / melee ---------------------------------------------
-    if (!this.alerted || !sees) return;
+    if (!this.alerted || !sees || this.stagger > 0) return;
     const t = this.type;
     if (time < this.nextFire || this.reloadT > 0) return;
 
@@ -2279,8 +2557,23 @@ export class Enemy {
       P.legL.rotation.x += bend; P.shinL.rotation.x -= 2 * bend;
       P.legR.rotation.x += bend; P.shinR.rotation.x -= 2 * bend;
     }
+    // A hit's reactions, each a spring of its own (see `_react`), and a
+    // stagger's envelope: in hard over a few hundredths, out over the rest.
+    const Rx = this.react;
+    for (const k in Rx) settle(Rx[k], dt, k === 'kneeL' || k === 'kneeR' ? 45 : 70, k === 'kneeL' || k === 'kneeR' ? 8 : 10);
+    const S = this.stagger > 0
+      ? smooth(Math.min(1, (this.staggerFor - this.stagger) / 0.07, this.stagger / (this.staggerFor * 0.6))) : 0;
+    // the way it was knocked, in the body's frame
+    const yaw = this.group.rotation.y, cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const sx = this.staggerDir.x * cy - this.staggerDir.z * sy, sz = this.staggerDir.x * sy + this.staggerDir.z * cy;
+    // a knee given way under a round to the leg, and both bent in a stumble
+    const kL = Math.max(0, Rx.kneeL.x) + 0.3 * S, kR = Math.max(0, Rx.kneeR.x) + 0.3 * S;
+    P.legL.rotation.x += 0.5 * kL; P.shinL.rotation.x -= 1.2 * kL;
+    P.legR.rotation.x += 0.5 * kR; P.shinR.rotation.x -= 1.2 * kR;
+    const sag = 0.09 * Math.max(kL, kR);
+
     // lowest with the feet furthest apart, highest as they pass
-    const bob = 0.035 * amp * (0.5 + 0.5 * Math.cos(2 * ph));
+    const bob = 0.035 * amp * (0.5 + 0.5 * Math.cos(2 * ph)) - sag;
 
     // ---- stance: square on patrol, bladed and shouldered once alerted
     this.aimT += ((this.alerted ? 1 : 0) - this.aimT) * Math.min(1, dt * 5);
@@ -2296,13 +2589,15 @@ export class Enemy {
     const breathe = Math.sin(this.idleT * 1.6) * 0.012 * (1 - amp);
     up.rotation.set(
       -0.10 * amp * (1 - 0.5 * A) + breathe + 0.05 * this.kick + f.x - 0.55 * haul - CROUCH.lean * c
-        - STOOP.lean * (st / STOOP.max),
-      -0.48 * A + Math.sin(ph) * 0.07 * amp * (1 - A) - 0.30 * (1 - A),
-      Math.sin(ph) * 0.035 * amp + f.z,
+        - STOOP.lean * (st / STOOP.max) + 0.45 * sz * S,
+      -0.48 * A + Math.sin(ph) * 0.07 * amp * (1 - A) - 0.30 * (1 - A) + Rx.twist.x,
+      Math.sin(ph) * 0.035 * amp + f.z - 0.45 * sx * S,
     );
 
     // the head stays on the target while the shoulders turn under it
-    P.neck.rotation.set(this.aimPitch * 0.6 * A - 0.5 * f.x, 0.48 * A + 0.30 * (1 - A) + this.lookYaw, 0, 'YXZ');
+    // — but a headshot snaps it, and a stagger throws it about
+    P.neck.rotation.set(this.aimPitch * 0.6 * A - 0.5 * f.x + Rx.headX.x + 0.3 * sz * S,
+      0.48 * A + 0.30 * (1 - A) + this.lookYaw - Rx.twist.x, Rx.headZ.x - 0.3 * sx * S, 'YXZ');
 
     // ---- the weapon, in the body's frame
     const w = P.weapon;
@@ -2329,6 +2624,11 @@ export class Enemy {
       POSE.position.y -= 0.05 * R;
       POSE.position.z += 0.06 * R;
     }
+    // knocked off line by a round to an arm; dropped and flung in a stagger
+    POSE.rotation.x += Rx.gunX.x * 0.5 - 0.6 * S;
+    POSE.rotation.z += Rx.gunZ.x * 0.5 + 0.3 * S;
+    POSE.position.y -= 0.1 * S;
+    POSE.position.z += 0.06 * S;
     if (this.swingT > 0) {
       // a hook strike: raised over the shoulder, then driven down through
       const t = 1 - this.swingT / 0.25;
@@ -2349,13 +2649,15 @@ export class Enemy {
     M4.copy(up.matrix).invert().multiply(w.matrix);
     reach(P.armR, P.foreR, V4.copy(this.hold.grip).applyMatrix4(M4), ARM.upper, ARM.fore, this.poleR);
     const support = reloading ? this._reloadHand(r, M4) : V4.copy(this.hold.fore).applyMatrix4(M4);
+    // staggered, the support hand comes off the gun and out for balance
+    if (S > 0) support.lerp(FLUNG, S);
     reach(P.armL, P.foreL, support, ARM.upper, ARM.fore, this.poleL);
 
     this.group.position.y = this.pos.y + bob - (CROUCH.drop * c + st) * this.group.scale.x;
     if (P.shadow) {
       // stays on the floor while the body bobs or crouches, and fades as it rises
       P.shadow.position.y = -bob / this.group.scale.x + CROUCH.drop * c + st + 0.03;
-      P.shadow.material.opacity = 0.75 * Math.max(0, 1 - bob * 4);
+      P.shadow.material.opacity = 0.75 * Math.max(0, 1 - Math.max(0, bob) * 4);
     }
 
     // eye flares when hurt
