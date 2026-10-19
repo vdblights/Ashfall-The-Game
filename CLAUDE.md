@@ -2047,6 +2047,46 @@ These each cost real debugging time. Changing them needs a reason.
   0.04 m lower with the body not lowered), and a head held 60 degrees off
   a shot coming round to 0.99 (0.5 with the ring not heard or the neck not
   turned).
+- **A hit lands where it lands, and a death falls the way it died.** A
+  hostile used to take every round on one spring that rocked the whole upper
+  body, and died the same way whatever killed it: the knees went and it
+  toppled, its gun still in its hands, a fixed 0.42 m dropped off its feet.
+  Now `damage` hands each hit to `_react`, which reads the point in the
+  body's own frame: a round off-centre turns the shoulders by its lever about
+  the spine, a headshot snaps the head, a round to a leg gives that knee, one
+  to an arm knocks the muzzle off line and holds the next shot 0.3 s. Each is
+  a spring of its own (`react`), so they add. Past its poise in damage taken
+  in quick succession (`impact`, which fades; `poise` per archetype, a
+  juggernaut 140, a scavenger 30, an elite 1.8x) or under any blast, it
+  staggers (`_stagger`): a stumble the way the blow went, through `resolve`
+  and never off a ledge, its fire held, and none again for 1.6 s, so a
+  shotgun cannot lock one in place. A death is chosen by its cause
+  (`deathHow`): a headshot drops where it stands, a round to the body knocks
+  it back up to 2.6 m, a blast throws it. Four things are load-bearing.
+  **The body topples only as far as there is room** (`_roomToFall`, one
+  line of sight at the chest when it dies, out past where the slide ends):
+  with a wall behind it, it sits down against the wall rather than lying
+  through it (`slump`). With nothing in the way it goes all the way over;
+  measuring "room" only out to the body's length read open street as a wall
+  and slumped every body against air. **It rests on its lowest point**
+  (`_lowest`, off each part's box, every frame of the fall): the fixed drop
+  was right for a kneel and put a body lying flat half under the street,
+  which in play read as bodies vanishing a second after they fell. **The
+  gun leaves the hand** (`_dropGun`, `_fallGun`): it falls and tumbles in
+  the world, stops at walls, lands on its side, and is written back into the
+  body's frame each step, because the batch draws it as the body's part.
+  **A blast throws a body through `resolve`, never by moving it**: `explode`
+  used to add 1.4 m to a hostile's position directly, through walls; it
+  passes its strength to `damage` (`force`) now and the stagger or the throw
+  carries the body. Variety comes off a hash of the body (`group.id`), never
+  the seeded stream. `a hostile flinches where it is hit, staggers under a
+  heavy blow, and falls the way it died` measures all of it, and fails with
+  `_react` a no-op (a leg hit bends neither knee), `_stagger` a no-op (a
+  close shotgun volley staggers nothing), the room ignored (a body against a
+  wall goes 1.32 m into it), no knock-back (0 m), the gun kept in the hands
+  (0.65 m off the ground) and the fixed drop put back (a lying body 0.84 m
+  under the street). Its hostiles are held with `speed: 0`: a `preferred` of
+  nearly nothing, which reads as "stay put", is a hostile told to close.
 - **A sound from somewhere is placed there, and only its direction is the
   panner's.** Every sound was mono. Now anything that happens at a point —
   a hostile's shot (at its muzzle), an impact, a hit, a death, a blast, a

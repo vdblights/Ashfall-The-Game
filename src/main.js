@@ -1796,9 +1796,10 @@ class Game {
       const exposed = this.world.lineOfSight(pos.x, originY, pos.z, e.pos.x, e.pos.y + 1.15, e.pos.z);
       const falloff = Math.pow(THREE.MathUtils.clamp(1 - dist / R, 0, 1), 1.6);
       V1.set(e.pos.x - pos.x, 0, e.pos.z - pos.z).normalize();
+      // the blast knocks whoever it does not kill back a stumble, and throws
+      // whoever it does: both walked by `resolve`, so neither goes into a wall
       const result = e.damage(BLAST_DAMAGE * falloff * (exposed ? 1 : 0.4),
-        'body', V1, V2.copy(e.pos).setY(e.pos.y + 1.2));
-      e.pos.addScaledVector(V1, falloff * 1.4);
+        'body', V1, V2.copy(e.pos).setY(e.pos.y + 1.2), Math.max(0.05, falloff * (exposed ? 1 : 0.4)));
       if (!friendly && label) this.registerHit(e, result, label, false);
     }
 
