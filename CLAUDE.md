@@ -86,6 +86,7 @@ builds, never to play.
 | `src/ash.js` | The ash falling round the camera and the smoke columns over the city, the roof map that keeps ash out of buildings, and which materials the settled ash goes on |
 | `src/shadows.js` | The sun's two shadow cascades, snapped to their texels |
 | `src/windows.js` | Window openings traced in the facade shader: reveal, glass, room |
+| `src/wet.js` | Wet asphalt and puddles: where the street is wet, and the fires mirrored in it |
 | `src/audio.js` | Every sound, synthesised via Web Audio |
 | `src/hud.js` | DOM readouts, killfeed, radar, capture banner |
 | `src/nav.js` | Walkable grid over `world.boxes`, and a route field to the player |
@@ -1425,6 +1426,50 @@ These each cost real debugging time. Changing them needs a reason.
   `reserve` or draws from `Math.random`, so the layout and the mark after
   boot are unchanged. `the air carries the light` and the bruise measure in
   `the sky has weather in it` guard it; the State section has what it cost.
+- **A wet street is a shader, and the fire in it is worked out, not
+  rendered.** `wetten` in `wet.js` patches the asphalt, the puddles and
+  their damp rings (`street`, `pool`, `ring`). The asphalt is wet along
+  both gutters, off each street's centre line by `BLOCK` and `ROAD_HALF`,
+  and in patches off a world-space field, so the wet does not repeat with
+  the 8 m tile. Where it is wet the asphalt is half as bright, nearly
+  smooth (roughness 0.18), its normal map drowned, and it shows 2.6 times
+  the sky. The sun's highlight on it keeps 4%, for the puddles' reason:
+  at 20% it was a white egg down the road. The flames are mirrored per
+  pixel. `updateWet` hands the shader the four lit drums nearest the
+  camera within 70 m once a frame, as plain `Vector4`s, at the flame's
+  foot and as bright as its light's flicker. The reflected view ray
+  glows where it passes through a flame's column, stretched by how rough
+  the water is and how far the ray goes, and nothing occludes it, so it
+  fades out by 26 m from the flame. A blown drum hands in nothing. Four
+  things keep it honest. **It draws nothing from the stream and mints no
+  object**, so the layout and the mark after boot are unchanged. **It
+  is off on low**: a Lambert twin copies the material's `userData`,
+  `wet` flag included, but not its `onBeforeCompile`, so a check asks
+  for PBR materials carrying the flag rather than the flag. **It chains
+  the hook it finds**, because the water and the damp ring already turn
+  their sun down in one. And **three keeps a material's uniforms from the
+  last program it compiled**: a check that builds a dry program and puts
+  the wet one back gets it from the cache without `wetFires` bound, so
+  the fire pair runs before the dry one. Switching tiers in the game is
+  safe, because every program the hook builds binds the same uniform.
+  `a wet street holds the sky and the fire in it` dries the asphalt down
+  a street (13% of the road changes), takes the flames out in front of a
+  drum (0.9% of the road warmer), blows the drum, and counts wet meshes
+  on low. It fails with the glow returning nothing, with a blown drum
+  still handed in, and with the asphalt never made wet.
+- **Weathering on a facade is painted on its own generator, after the
+  windows are rolled.** The facade painter's last pass (`weather` in
+  `textures.js`) cracks the wall from the corners of some windows (up
+  the brick courses on brick, wandering lines elsewhere), runs dark,
+  green and, on brick and stone, salt streaks down from every band,
+  spalls render back to brick and concrete back to aggregate (never on
+  a window), and stars and corners the glass that still stands. It runs
+  on `makeRandom(hashKey('weather' + style + variant))` with
+  `Math.random` swapped for it, so every roll before it, the window
+  states the shader reads above all, is what it was. At street
+  distance cracks under 2 px wide and runoff under 0.2 alpha vanish
+  into the facade's own grain. The first cut was both, and it looked
+  like nothing changed in a frame from across a street.
 - **Water is a mirror for the sky and not for the sun; litter and puddles
   lie on one level or not at all.** A puddle (`puddles` in `city.js`) is a
   near-black fan at roughness 0.06, so it shows the environment map — the
@@ -2607,6 +2652,18 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the air was two of four looks offered: wet streets that
+mirror the sky and the fire, and weathered facades. Both are invariants
+above. Each was judged in rendered frames before and after, from the road
+in front of two drums, down a street and across one at two facades, and
+the first cut of each was wrong in a way only a frame showed. The wet
+road's sun glint bloomed into a white smear down the street. The
+weathering was invisible from across the road. What it cost, seed 1 under
+software rendering against `main`, three views on each tier, twice: high
+5,644-6,974 against 5,745-6,722 ms a frame and low 825-1,069 against
+837-1,033, both within noise. Draw calls and triangles are unchanged, and
+so are the layout, the prints and the mark after boot.
 
 The pass after the slide and the lean came from play, in one line: a lot
 of buildings I can't get into. About one tower in three opened; now six

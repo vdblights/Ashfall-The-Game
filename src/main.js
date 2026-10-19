@@ -21,6 +21,7 @@ import { ArmouryScreen, EFFECT, freshKit } from './armoury.js';
 import { PerfMeter } from './perf.js';
 import { Barrels, BARREL } from './barrels.js';
 import { Glass } from './glass.js';
+import { updateWet } from './wet.js';
 import { installAtmosphere, skyMaterial, environmentFrom, SUN_DIR, SUN_COLOR } from './atmosphere.js';
 import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE } from './shadows.js';
 import { initRandom, getSeed, reserve, spend } from './rng.js';
@@ -1975,6 +1976,7 @@ class Game {
 
     this.hud.tick(elapsed);
     this.flickerFires(elapsed);
+    updateWet(this.barrels?.list, BARREL.height, this.camera);
     const wind = this.paintedMaterials?.weedMat?.userData.windTime;
     if (wind) wind.value = this.time;
     this.updateAsh();

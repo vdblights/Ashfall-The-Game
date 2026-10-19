@@ -6,6 +6,7 @@ import { reserve, spend, makeRandom, UUID_COST } from './rng.js';
 import { chamferGeo, corrugateGeo, loftGeo, mergeIntoOne, sideGeo, latheGeo, bend, planarUV } from './shapes.js';
 import { cutWindows } from './windows.js';
 import { SUN_DIR } from './atmosphere.js';
+import { wetten } from './wet.js';
 
 const BLOCK = 34;      // centre-to-centre distance between city lots
 const GRID = 8;        // lots per axis
@@ -2734,6 +2735,10 @@ export const CITY_PAINT = [
         roughnessMap: TEX.surfaceFrom(asphaltTex, { dark: 0.98, lite: 0.55 }, 'asph'),
         roughness: 1, metalness: 0.05, envMapIntensity: 0.5, vertexColors: true,
       });
+      // Wet along the gutters and in patches across the carriageway, where it
+      // shows the sky and the fires near it (`wet.js`). Twice the dry road's
+      // reflection, which is the sky at the strength a puddle shows it.
+      wetten(m.asphaltMat, 'street', { env: 2.6, sun: 0.04, block: BLOCK, roadHalf: ROAD_HALF });
       // Lane paint. It lies 2 cm off a ground plane that stretches 324 m, and
       // a depth buffer with a 0.06 m near plane cannot separate those past
       // about 140 m, so the offset is backed up by a polygon offset rather
@@ -2853,6 +2858,8 @@ export const CITY_PAINT = [
         shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>',
           '#include <lights_fragment_end>\n  reflectedLight.directSpecular *= 0.015;');
       };
+      // and the fires in it, sharp (`wet.js`)
+      wetten(m.waterMat, 'pool');
       // Damp ground is darker ground. With any real sheen the ring caught the
       // bright sky at a grazing angle and came out paler than the asphalt it
       // was meant to darken, so it reflects almost nothing.
@@ -2865,6 +2872,7 @@ export const CITY_PAINT = [
         shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>',
           '#include <lights_fragment_end>\n  reflectedLight.directSpecular *= 0.1;');
       };
+      wetten(m.dampMat, 'ring');
       m.litterMat = new THREE.MeshStandardMaterial({
         map: TEX.litter(), alphaTest: 0.5,
         roughness: 0.92, metalness: 0, envMapIntensity: 0.5, vertexColors: true,
