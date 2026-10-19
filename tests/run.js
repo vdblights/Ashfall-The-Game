@@ -858,6 +858,11 @@ check('what stands on a perch holds you up', { reads: true }, async (page) => {
           // which by the floors' rule nobody stands on — is a wall's
           if (g.world.boxes.some((k) => k.base > 0 && Math.abs(k.top - y) < 0.01 &&
             x > k.minX && x < k.maxX && z > k.minZ && z < k.maxZ)) continue;
+          // and a face inside a collider is nowhere a foot can get to: the
+          // top of a shop's slab, under the block of floors over it, which
+          // a perch across the street first found once more shops opened
+          if (g.world.boxes.some((k) => k.base < y - 0.01 && k.top > y + 0.01 &&
+            x > k.minX && x < k.maxX && z > k.minZ && z < k.maxZ)) continue;
           ring++;
           const ground = g.world.groundHeight(x, z, 0.12, y + 0.25);
           if (ground < y - 0.15) off.push([+x.toFixed(1), +y.toFixed(2), +z.toFixed(1), +ground.toFixed(2)]);
@@ -1471,23 +1476,48 @@ check('a crossing drops its kerb, and the ramp you see is the ramp you walk', as
   return r;
 });
 
-check('long falls hurt, short drops do not', async (page) => {
+check('a fall hurts by its height, and from a roof it kills', async (page) => {
+  // A fall was judged by its impact speed past 13 m/s, at 6 points a m/s:
+  // 48 health off a 10 m roof and 71 off the 14 m ones, so no roof in the
+  // sector could kill you. It is judged by the height now (FALL in
+  // player.js): nothing under 3.5 m, a full bar from 11 m, and a plate
+  // carrier does not soften it. The height is the feet's highest since they
+  // left the ground: the landing speed under-read a 9 m drop as 7.6 m.
   const r = await page.evaluate(() => {
     const g = window.__game;
-    const drop = (h) => {
+    // somewhere open to the sky: (0, 0) has a prop standing a metre up in it
+    let at = null;
+    for (let i = 0; i < 400 && !at; i++) {
+      const x = -17 + (i % 20 - 10) * 1.5, z = 17 + (Math.floor(i / 20) - 10) * 1.5;
+      const low = g.world.groundHeight(x, z, 0.6, 0.6);
+      if (g.world.groundHeight(x, z, 0.6, 30) === low && !g.world.blocked(x, z, 0.6, low + 0.1)) at = { x, z };
+    }
+    const drop = (h, armour = 0) => {
       g.startRun();
+      g.startWave = () => {};
       g.input.locked = true;
       g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
-      g.player.reset(0, 0);
-      g.player.feetY = h;
+      g.kit.armour = armour;
+      g.player.reset(at.x, at.z);
+      g.player.feetY += h;
       g.player.velocity.y = 0;
-      for (let f = 0; f < 60 * 6; f++) { g.time += 1 / 60; g.step(1 / 60); }
-      return Math.round(g.player.health);
+      // long enough to land from the highest drop, short of regeneration
+      for (let f = 0; f < 60 * 3 && g.state === 'playing'; f++) { g.time += 1 / 60; g.step(1 / 60); }
+      const out = { health: Math.round(g.player.health), dead: g.player.dead };
+      g.kit.armour = 0;
+      return out;
     };
-    return { short: drop(3), long: drop(24) };
+    return {
+      car: drop(3.2), stack: drop(6), floor3: drop(9), armoured: drop(9, 3),
+      roof: drop(11.5), tall: drop(14),
+    };
   });
-  expect(r.short === 100, `a 3 m drop cost ${100 - r.short} health`);
-  expect(r.long < 60, `a 24 m fall only cost ${100 - r.long} health`);
+  await page.evaluate(() => localStorage.removeItem('ashfall.records'));
+  expect(r.car.health === 100, `a 3.2 m drop cost ${100 - r.car.health} health`);
+  expect(r.stack.health < 100 && r.stack.health > 60, `a 6 m drop left ${r.stack.health} health`);
+  expect(r.floor3.health < 50 && !r.floor3.dead, `a 9 m drop left ${r.floor3.health} health (dead: ${r.floor3.dead})`);
+  expect(r.armoured.health === r.floor3.health, `armour took a 9 m drop to ${r.armoured.health} against ${r.floor3.health}`);
+  expect(r.roof.dead && r.tall.dead, `an 11.5 m drop dead: ${r.roof.dead}, a 14 m drop dead: ${r.tall.dead}`);
   return r;
 });
 
@@ -7729,10 +7759,22 @@ check('a seed still lays out the city it did', { warm: true, weight: 6 }, async 
   // colliders and solids moved: `placed`, `fpPlaced`, the perches and the
   // mark are identical on all three seeds. Before it: 7581/2777 '1e5c2df4',
   // 6881/2700 'ce7ef956', 6703/2694 '1417d6a'.
+  //
+  // And more towers open: six in ten where it was one in three (`opensAt`),
+  // asked for from play as too many buildings you cannot get into. Every
+  // tower that opened is a shop, with a stairwell and floors where its laps
+  // leave a stooped juggernaut room (`lapClear`), so the layout inside
+  // those footprints is new, and the perches are unchanged on all three
+  // seeds. The mark moved, and has to: the bake bills one UUID a mesh, and
+  // an open tower is many more meshes than a closed one. Columns and
+  // aisles keep 3.2 m off a shaft (`AISLE_GAP`), and a stair shop's last
+  // crate may stand free. Before it: 7576/2774 '252600ea' (7040 '25801dfc')
+  // -1299344873, 6877/2696 '10471050' (6435 '311f203e') -98700018,
+  // 6701/2692 'ee9d8a82' (6318 '5c4a4264') 979169931.
   const want = {
-    1: { boxes: 7576, solids: 2774, perches: 32, fp: '252600ea', placed: 7040, fpPlaced: '25801dfc', mark: -1299344873 },
-    7: { boxes: 6877, solids: 2696, perches: 26, fp: '10471050', placed: 6435, fpPlaced: '311f203e', mark: -98700018 },
-    20260101: { boxes: 6701, solids: 2692, perches: 17, fp: 'ee9d8a82', placed: 6318, fpPlaced: '5c4a4264', mark: 979169931 },
+    1: { boxes: 9766, solids: 3499, perches: 32, fp: 'af1891e0', placed: 9230, fpPlaced: '171519ec', mark: -1376937285 },
+    7: { boxes: 10011, solids: 3773, perches: 26, fp: '77a53d6b', placed: 9556, fpPlaced: 'd0d75eb8', mark: 424323334 },
+    20260101: { boxes: 11807, solids: 4141, perches: 17, fp: 'da9f2fd9', placed: 11409, fpPlaced: '5ae5df2e', mark: -1688204973 },
   };
   // `mark` is where the seeded stream stands at the end of boot, which is
   // the stream every spawn is picked from. Every pass that changed how
