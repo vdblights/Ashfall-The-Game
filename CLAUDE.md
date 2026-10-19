@@ -270,8 +270,9 @@ These each cost real debugging time. Changing them needs a reason.
   first stepped `t += 0.1` along each edge, which lands a hair under the
   far corner and never closed the run that ends there — 32 drops counted of
   64. Step a scan by count.
-- **A box may stand off the ground, and then it is a ceiling.** About one
-  tower in three (`opensAt`, by position) has a ground floor you walk into
+- **A box may stand off the ground, and then it is a ceiling.** About six
+  towers in ten (`opensAt`, by position; it was one in three, and play
+  said too many buildings were shut) have a ground floor you walk into
   (`groundFloor` in `city.js`): a shopfront of piers with doorways, windows
   over a sill and shutters on the street faces, blank walls onto the
   building next door, a slab ceiling, and inside columns, aisles of
@@ -297,10 +298,12 @@ These each cost real debugging time. Changing them needs a reason.
   them into a pocket. **The open building still costs the stream what the
   closed one did**: the block, the glass band and the shutter are minted
   and their rolls drawn as before, the block's shape is swapped inside a
-  reserve, and the room is built inside one — so the mark after boot is
-  identical, and compared collider by collider on seeds 1, 7 and 20260101
-  the only colliders gone are the 21, 16 and 25 blocks that opened and every
-  new one lies inside one of their footprints. **The bake darkens what is
+  reserve, and the room is built inside one — so when they first opened,
+  compared collider by collider on seeds 1, 7 and 20260101, the only
+  colliders gone were the 21, 16 and 25 blocks that opened and every new
+  one lay inside one of their footprints. The mark after boot does move
+  with how many open, because the bake bills one UUID a mesh and a shop is
+  many meshes; that is a layout change and the layout check says so. **The bake darkens what is
   under a ceiling** (`indoorField`) by how far it is from the room's
   doorways and windows (`toOpening`), or a room is as bright as the
   pavement: under half the light at the back of a wide floor, most of it
@@ -350,7 +353,11 @@ These each cost real debugging time. Changing them needs a reason.
   at full stoop, 1.46 of its units, under `stair.clear`), and on a stair it
   collides at that height (`bodyHeight`), or a flight overhead is a wall
   and the shaft's door a lintel. Every elite fits but a warlord (2.86 m
-  stooped). A lane is 1.25 m and an elite raider 1.31 m across, and a test
+  stooped). Fitting is not enough on a tight lap: with six in ten towers
+  open, one stair on seed 1 had 2.35 m of headroom, a stooped juggernaut
+  fitted it going up and stuck under a landing coming down, and was
+  relocated. A building whose laps would be under 2.45 m (`lapClear`) has
+  its shop and no stair. A lane is 1.25 m and an elite raider 1.31 m across, and a test
   of the width was written and taken out, because one walked four
   stairwells without it. **Headroom is asked from the hips**
   (`STOOP.hip`), not the feet: on a flight the tread two steps up has its
@@ -394,9 +401,13 @@ These each cost real debugging time. Changing them needs a reason.
   and two shelves meeting in a corner as two; clustering touching boxes
   got both wrong. It is built inside the tower's reserve on hash salts
   nothing else uses, so it costs the stream nothing; the layout check was
-  re-measured once for it, collider by collider. On seed 1, 13 of 21 rooms
-  hold three or more and every room at least two; the rest are 10 m stair
-  shops whose shaft and doorways leave one blank wall. `no shop is left
+  re-measured once for it, collider by collider. Every room holds at least
+  two; a 10 m stair shop whose shaft and doorways leave one blank wall
+  stands its last crate out in the room (`site(..., 'any')`), because with
+  50 rooms on seed 1 one was left holding one piece. **Columns and aisles
+  keep `AISLE_GAP` (3.2 m) off a shaft**: closer, the route field's
+  shoulders round the two met and left a pocket of floor behind them, in
+  two rooms of fifty. `no shop is left
   bare` asks for two in every room: 7 rooms short with the furnisher off
   (the fewest 0) and 3 with columns counted as furniture. What it cost,
   measured with pieces on the windows too (165 solids, against 78 now):
@@ -536,9 +547,10 @@ These each cost real debugging time. Changing them needs a reason.
   and straight down onto every street between two lots for road (272 of
   280; none with the roads not laid).
 - **A box off the ground may be a deck: a ceiling to everything but the
-  feet over it.** Thirteen of seed 1's 21 open ground floors — every one
-  under a roof no higher than 14 m (`STAIR.top`) with a corner whose walls
-  have no doorway behind it — have a stairwell (`stairwell` in `city.js`):
+  feet over it.** Twenty-four of seed 1's 50 open ground floors — every one
+  under a roof no higher than 14 m (`STAIR.top`), whose laps leave a
+  stooped juggernaut room (`lapClear` at least `STAIR.clear`, 2.45 m), with
+  a corner whose walls have no doorway behind it — have a stairwell (`stairwell` in `city.js`):
   switchback flights of ten in two lanes either side of a spine, a landing
   across both lanes at each end, an even number of flights so the last one
   walks straight out of a bulkhead onto the roof, and the roof made a deck
@@ -2595,6 +2607,29 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the slide and the lean came from play, in one line: a lot
+of buildings I can't get into. About one tower in three opened; now six
+in ten do (`opensAt`), and seed 1 has 50 shops where it had 34, 24
+stairwells and 59 floors. Opening is one threshold, and the rest of the
+pass was what fifty rooms found that thirty-four never had. A 10 m stair
+shop was left holding one piece of furniture, so its last crate may now
+stand out in the room. Columns and aisles beside a shaft left pockets of
+floor the route field could not reach, two rooms of fifty, so they keep
+`AISLE_GAP` off it. And one stair had 2.35 m of headroom a lap: a stooped
+juggernaut fitted it going up and stuck under a landing coming down, so a
+building whose laps would be that tight gets its shop and no stair
+(`lapClear`). `what stands on a perch holds you up` read a face buried
+inside a collider as unsupported and skips them now. The layout check was
+re-measured once, with the reason: more shops are more meshes, and the
+bake bills one UUID a mesh, so the mark moves with how many towers open.
+The other four in ten stay shut on purpose, with a storefront, because a
+street of nothing but open doorways reads as a car park and the closed
+blocks are what a fight takes cover against. What it cost, seed 1 under
+software rendering against `main`, three views twice each: triangles
+1.68-1.73M → 1.81-1.85M a frame (+6-8%), draw calls 616-645 → 629-660,
+frame time 4,322-4,794 → 4,637-5,374 ms on high (+7-12%), which the
+`auto` ladder absorbs where a machine is short.
 
 The pass after the falling ash was four looks offered from a list and
 taken together: light shafts through the dust, ash settled on the ground,
