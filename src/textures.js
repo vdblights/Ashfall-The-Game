@@ -661,9 +661,245 @@ export function facade(style = 0, variant = 0, plain = false) {
       ctx.fillRect(x, 0, 1 + Math.random() * 6, s);
     }
 
+    // Weathering laid over the lot: cracks, fallen render, runoff from the
+    // bands and the glass that is left. On a generator of its own, so every
+    // roll the face made before it — which window is broken, which boarded,
+    // which the shader opens — is the roll it always was.
+    const saved = Math.random;
+    Math.random = makeRandom(hashKey('weather' + style + '_' + variant + (plain ? 'p' : '')));
+    try {
+      weather(ctx, s, def, plain, states);
+    } finally {
+      Math.random = saved;
+    }
+
     noise(ctx, s, 10);
     return c;
   });
+
+  /**
+   * Years of weather on a face that nobody has kept. A wall cracks where it
+   * is weakest, at the corners of its openings, and a brick wall cracks up
+   * its mortar in steps; render lets go in sheets and shows what it was
+   * hiding; every ledge sends water down the wall under it, black where it
+   * runs often, green where it never dries, and pale where it brings the
+   * salt out of the brick. And the glass that is still in its frame has
+   * been shot through.
+   */
+  function weather(ctx, s, def, plain, states) {
+    const floor = s / FACADE_FLOORS, bay = s / FACADE_BAYS;
+    const winW = bay * WINDOW.w, winH = floor * WINDOW.h;
+    const brick = def.name === 'brick';
+
+    // fallen render, spalled concrete and stone
+    // (never over an opening: what is in a window is the shader's to draw)
+    if (def.name !== 'brick' && def.name !== 'office') {
+      const n = def.name === 'render' ? 5 : 3;
+      for (let i = 0, tries = 0; i < n && tries < 40; tries++) {
+        const x = rr(0, s), y = rr(0, s), r = rr(30, 90);
+        let clear = true;
+        for (let row = 0; row < (plain ? 0 : FACADE_FLOORS) && clear; row++) {
+          for (let b = 0; b < FACADE_BAYS; b++) {
+            const wx = b * bay + (bay - winW) / 2, wy = row * floor + floor * WINDOW.top;
+            if (x + r * 1.7 > wx - 12 && x - r * 1.7 < wx + winW + 12 && y + r * 1.1 > wy - 12 && y - r * 1.1 < wy + winH + 16) { clear = false; break; }
+          }
+        }
+        if (!clear) continue;
+        spall(ctx, s, x, y, r, def.name);
+        i++;
+      }
+    }
+
+    // cracks from the corners of the openings, out and away from them
+    const openings = [];
+    if (!plain) {
+      for (let r = 0; r < FACADE_FLOORS; r++) {
+        for (let b = 0; b < FACADE_BAYS; b++) {
+          openings.push([b * bay + (bay - winW) / 2, r * floor + floor * WINDOW.top]);
+        }
+      }
+    } else {
+      for (let i = 0; i < 6; i++) openings.push([rr(0, s), rr(0, s)]);
+    }
+    for (const [x, y] of openings) {
+      for (const [cx, cy, sx, sy] of [[x, y + winH + 9, -1, 1], [x + winW, y + winH + 9, 1, 1], [x, y - 8, -1, -1], [x + winW, y - 8, 1, -1]]) {
+        if (!chance(plain ? 0.35 : 0.28)) continue;
+        const len = rr(70, 220);
+        if (brick) stepCrack(ctx, s, cx, cy, sx, sy, len);
+        else wallCrack(ctx, cx, cy, Math.atan2(sy, sx * rr(0.35, 1.2)), len, rr(2.4, 4.2));
+      }
+    }
+
+    // water off every band and sill, after the cracks so it runs over them
+    for (let r = 0; r < (plain ? 1 : FACADE_FLOORS); r++) {
+      const y = plain ? rr(0, s * 0.5) : r * floor + floor * 0.14 + 7;
+      for (let k = 0; k < 12; k++) {
+        const x = rr(0, s), w = rr(8, 70), len = rr(60, floor * 0.9);
+        const kind = Math.random();
+        if (kind < 0.55) runoff(ctx, x, y, w, len, '20,16,12', rr(0.18, 0.38));
+        else if (kind < 0.8) runoff(ctx, x, y, w, len * 0.8, '30,44,22', rr(0.18, 0.34));      // algae
+        else if (brick || def.name === 'stone') runoff(ctx, x, y, w * 1.4, len * 0.5, '226,220,204', rr(0.12, 0.24));  // salt
+      }
+    }
+
+    // the glass still in its frame, shot through and starred
+    if (plain) return;
+    states.forEach((state, i) => {
+      if (state !== WINDOW_GLASS) return;
+      const r = Math.floor(i / FACADE_BAYS), b = i % FACADE_BAYS;
+      const x = b * bay + (bay - winW) / 2, y = r * floor + floor * WINDOW.top;
+      const holes = Math.floor(rr(0, 3.4));
+      for (let k = 0; k < holes; k++) starred(ctx, x + rr(winW * 0.12, winW * 0.88), y + rr(winH * 0.12, winH * 0.88), rr(22, 46));
+      if (chance(0.3)) {
+        // a corner gone: the room behind it, dark
+        const cx = chance(0.5) ? x : x + winW, cy = chance(0.5) ? y : y + winH;
+        ctx.fillStyle = 'rgba(8,8,10,0.85)';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (cx === x ? 1 : -1) * rr(winW * 0.15, winW * 0.45), cy);
+        ctx.lineTo(cx + (cx === x ? 1 : -1) * rr(0, winW * 0.12), cy + (cy === y ? 1 : -1) * rr(winH * 0.15, winH * 0.5));
+        ctx.closePath();
+        ctx.fill();
+      }
+    });
+  }
+
+  /** A crack in a solid wall: a dark line with a lit lip, wandering a little. */
+  function wallCrack(ctx, x, y, a, len, width) {
+    const pts = [[x, y]];
+    const steps = 7 + (Math.random() * 5 | 0);
+    for (let i = 0; i < steps; i++) {
+      a += rr(-0.45, 0.45);
+      x += Math.cos(a) * len / steps; y += Math.sin(a) * len / steps;
+      pts.push([x, y]);
+      if (i > 2 && chance(0.12)) wallCrack(ctx, x, y, a + rr(-1, 1), len * 0.35, width * 0.6);
+    }
+    for (const [dx, dy, col, w] of [[1, 1.2, 'rgba(255,248,236,0.12)', 1], [0, 0, 'rgba(10,8,8,0.62)', 0]]) {
+      ctx.strokeStyle = col;
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineWidth = Math.max(0.6, width * (1 - i / pts.length * 0.75)) + w * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(pts[i - 1][0] + dx, pts[i - 1][1] + dy);
+        ctx.lineTo(pts[i][0] + dx, pts[i][1] + dy);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** A crack in brickwork, which runs up the mortar a course at a time. */
+  function stepCrack(ctx, s, x, y, sx, sy, len) {
+    const course = s / 46, brickLen = course * 2.2;
+    ctx.strokeStyle = 'rgba(8,6,6,0.7)';
+    let run = 0;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    while (run < len) {
+      const across = brickLen * rr(0.3, 0.6) * sx;
+      ctx.lineTo(x + across, y);
+      x += across;
+      ctx.lineTo(x, y + course * sy);
+      y += course * sy;
+      run += course + Math.abs(across);
+    }
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+  }
+
+  /**
+   * Where the face has let go: a ragged sheet gone, its broken edge lit on
+   * top and shadowed under, and what it was laid on showing through —
+   * brick under render, aggregate and the odd bar under concrete and stone.
+   */
+  function spall(ctx, s, x, y, r, name) {
+    const pts = [];
+    const n = 18;
+    let rad = r;
+    for (let k = 0; k < n; k++) {
+      rad = Math.max(r * 0.45, Math.min(r * 1.25, rad + rr(-0.22, 0.22) * r));
+      const a = (k / n) * Math.PI * 2;
+      pts.push([x + Math.cos(a) * rad * 1.3, y + Math.sin(a) * rad * 0.8]);
+    }
+    const shape = () => {
+      ctx.beginPath();
+      pts.forEach(([px, py], k) => ctx[k ? 'lineTo' : 'moveTo'](px, py));
+      ctx.closePath();
+    };
+    ctx.save();
+    shape();
+    ctx.clip();
+    if (name === 'render') {
+      ctx.fillStyle = 'rgb(82,58,46)';
+      ctx.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+      const course = s / 46;
+      for (let yy = Math.floor((y - r * 2) / course) * course; yy < y + r * 2; yy += course) {
+        ctx.fillStyle = 'rgba(150,140,126,0.3)';
+        ctx.fillRect(x - r * 2, yy, r * 4, 2.5);
+        const off = Math.round(yy / course) % 2 ? course * 1.1 : 0;
+        for (let xx = Math.floor((x - r * 2) / (course * 2.2)) * course * 2.2 + off; xx < x + r * 2; xx += course * 2.2) {
+          ctx.fillRect(xx, yy, 2.5, course);
+          ctx.fillStyle = `rgba(${chance(0.5) ? '130,78,56' : '50,30,24'},${rr(0.1, 0.3)})`;
+          ctx.fillRect(xx + 2.5, yy + 2.5, course * 2.2 - 2.5, course - 2.5);
+          ctx.fillStyle = 'rgba(150,140,126,0.3)';
+        }
+      }
+    } else {
+      // fresh break: paler than the weathered face, and rough with stone
+      ctx.fillStyle = 'rgba(150,146,138,0.32)';
+      ctx.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+      for (let k = 0; k < r * 4; k++) {
+        ctx.fillStyle = `rgba(${chance(0.5) ? '170,164,152' : '30,28,26'},${rr(0.12, 0.35)})`;
+        ctx.fillRect(x + rr(-r * 1.3, r * 1.3), y + rr(-r, r), rr(1, 3.5), rr(1, 3));
+      }
+      if (name === 'panel' && chance(0.7)) {
+        ctx.strokeStyle = 'rgba(112,72,40,0.8)';
+        ctx.lineWidth = 3;
+        for (let k = 0; k < 2; k++) {
+          const yy = y + rr(-r * 0.5, r * 0.5);
+          ctx.beginPath(); ctx.moveTo(x - r * 1.4, yy); ctx.lineTo(x + r * 1.4, yy + rr(-4, 4)); ctx.stroke();
+        }
+      }
+    }
+    ctx.fillStyle = 'rgba(24,20,16,0.22)';
+    ctx.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+    // shade inside the upper edge, where the face still stands proud
+    const g = ctx.createLinearGradient(0, y - r, 0, y);
+    g.addColorStop(0, 'rgba(0,0,0,0.45)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r * 2, y - r * 1.2, r * 4, r * 1.2);
+    ctx.restore();
+    // the broken edge
+    shape();
+    ctx.strokeStyle = 'rgba(232,224,210,0.12)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // and the stain that runs out of the hole
+    runoff(ctx, x - r * 0.4, y + r * 0.6, r * 0.8, rr(40, 120), '22,18,14', rr(0.12, 0.25));
+  }
+
+  /** A round through glass: a hole, rays out to the frame and a ring or two. */
+  function starred(ctx, x, y, r) {
+    ctx.fillStyle = 'rgba(6,6,8,0.9)';
+    ctx.beginPath(); ctx.arc(x, y, rr(1.6, 3), 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(214,224,230,0.55)';
+    ctx.lineWidth = 1.1;
+    const rays = 6 + (Math.random() * 5 | 0), ends = [];
+    for (let k = 0; k < rays; k++) {
+      const a = (k / rays) * Math.PI * 2 + rr(-0.3, 0.3), l = r * rr(0.5, 1.4);
+      ctx.beginPath(); ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * l * 0.5 + rr(-2, 2), y + Math.sin(a) * l * 0.5 + rr(-2, 2));
+      ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      ctx.stroke();
+      ends.push(a);
+    }
+    for (let ring = 0; ring < 1 + (chance(0.5) ? 1 : 0); ring++) {
+      const rr0 = r * (0.3 + ring * 0.3);
+      ctx.beginPath();
+      ends.forEach((a, k) => ctx[k ? 'lineTo' : 'moveTo'](x + Math.cos(a) * rr0, y + Math.sin(a) * rr0));
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
 
   /** The wall itself: what the building is built out of, under the grime. */
   function wallMaterial(ctx, s, name, def) {

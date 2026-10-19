@@ -5566,6 +5566,144 @@ check('the air carries the light: shafts from the sun, ash on what faces up, hea
   return r;
 });
 
+check('a wet street holds the sky and the fire in it, and the low tier stays dry', { weight: 2 }, async (page) => {
+  // The wet asphalt and the puddles are a shader on their materials: wet
+  // asphalt is darker and nearly smooth, so it shows the sky, and every wet
+  // surface shows a smear of the nearest flames, worked out per pixel off
+  // the handful `updateWet` hands in a frame. Two pairs of frames, each its
+  // own evaluate: on the road facing a drum with the flames handed in and
+  // then taken out, and down a street with the asphalt dried (its program
+  // put back as it was before `wetten`). And on low, whose Lambert twins
+  // carry none of it, nothing drawn is wet.
+  await page.evaluate(async () => {
+    const { WET_FIRES, updateWet } = await import('/src/wet.js');
+    const { BARREL } = await import('/src/barrels.js');
+    const g = window.__game;
+    g.startRun();
+    g.applyQuality('high');
+    g.renderer.setPixelRatio(g.renderer.getPixelRatio() / 2);
+    g.resize();
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    for (const e of g.enemies) e.dead = true;
+    for (let i = 0; i < 5; i++) { g.time += 1 / 60; g.step(1 / 60); }
+    g.viewScene.visible = false;
+    const gl = g.renderer.getContext();
+    const frame = () => {
+      g.render();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return { px, w, h };
+    };
+    const lum = (p, i) => p[i] * 0.3 + p[i + 1] * 0.5 + p[i + 2] * 0.2;
+    // the bottom half of the frame, where the road is
+    const lower = (a, b, test) => {
+      let n = 0, of = 0;
+      for (let y = 0; y < a.h >> 1; y++) for (let x = 0; x < a.w; x++) {
+        const k = (y * a.w + x) * 4;
+        of++;
+        if (test(a.px, b.px, k)) n++;
+      }
+      return n / of;
+    };
+    const look = (x, y, z, tx, ty, tz) => {
+      g.camera.position.set(x, y, z);
+      g.camera.lookAt(tx, ty, tz);
+      g.camera.updateMatrixWorld();
+    };
+    window.__wet = { g, WET_FIRES, updateWet, BARREL, frame, lum, lower, look };
+  });
+
+  const fire = await page.evaluate(() => {
+    const { g, WET_FIRES, updateWet, BARREL, frame, lower, look } = window.__wet;
+    const w = g.world;
+    // stand on the road 10 m off a lit drum with the road clear between
+    for (const b of g.barrels.list) {
+      if (b.burst) continue;
+      for (let k = 0; k < 16; k++) {
+        const a = k / 16 * Math.PI * 2;
+        const x = b.x + Math.cos(a) * 10, z = b.z + Math.sin(a) * 10;
+        if (w.groundHeight(x, z, 0.3, 1.0) > 0.05 || w.occupied(x, z, 0.6, 2)) continue;
+        let ok = true;
+        for (let t = 0.15; t < 0.85; t += 0.1) {
+          const px = x + (b.x - x) * t, pz = z + (b.z - z) * t;
+          if (w.groundHeight(px, pz, 0.1, 1.0) > 0.05 || w.occupied(px, pz, 0.3, 1.5)) ok = false;
+        }
+        if (!ok || !w.lineOfSight(x, 1.6, z, b.x, 1.4, b.z)) continue;
+        look(x, 1.7, z, b.x, 0.6, b.z);
+        updateWet(g.barrels.list, BARREL.height, g.camera);
+        const handed = WET_FIRES.value.filter((v) => v.w > 0).length;
+        const lit = frame();
+        for (const v of WET_FIRES.value) v.w = 0;
+        const out = frame();
+        // the smear is orange: red up by more than blue
+        const warmer = lower(lit, out, (p, q, i) => (p[i] - q[i]) > 6 && (p[i] - q[i]) > (p[i + 2] - q[i + 2]) + 3);
+        const blown = (() => {
+          b.burst = true;
+          updateWet(g.barrels.list, BARREL.height, g.camera);
+          const near = WET_FIRES.value.some((v) => v.w > 0 && Math.hypot(v.x - b.x, v.z - b.z) < 0.1);
+          b.burst = false;
+          return near;
+        })();
+        return { handed, warmer, blown };
+      }
+    }
+    return null;
+  });
+
+  // The street is dried last: three keeps a material's uniforms from the
+  // last program it compiled, so once the dry program has been built the
+  // wet one comes back without the flames bound.
+  const street = await page.evaluate(() => {
+    const { g, frame, lum, lower, look } = window.__wet;
+    const mats = new Set();
+    g.scene.traverse((o) => { if (o.isMesh && o.material?.userData?.wet === 'street') mats.add(o.material); });
+    // a road at the plaza's edge, looking down it toward the sun's side
+    look(-17 + 17, 1.7, 17 + 14, -17 + 17, 0.2, 17 - 30);
+    const wet = frame();
+    const kept = [];
+    for (const m of mats) {
+      kept.push([m, m.onBeforeCompile, m.customProgramCacheKey]);
+      m.onBeforeCompile = m.userData.dry.onBeforeCompile || (() => {});
+      m.customProgramCacheKey = m.userData.dry.customProgramCacheKey || (() => 'dry');
+      m.needsUpdate = true;
+    }
+    const dry = frame();
+    for (const [m, a, b] of kept) { m.onBeforeCompile = a; m.customProgramCacheKey = b; m.needsUpdate = true; }
+    return {
+      materials: mats.size,
+      changed: lower(wet, dry, (a, b, k) => Math.abs(lum(a, k) - lum(b, k)) > 6),
+    };
+  });
+
+  const low = await page.evaluate(() => {
+    const { g } = window.__wet;
+    g.applyQuality('low');
+    let wet = 0, meshes = 0;
+    g.scene.traverse((o) => {
+      if (!o.isMesh || !o.visible) return;
+      meshes++;
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      // a twin copies the flag, not the shader: only a PBR material is wet
+      if (ms.some((m) => m?.isMeshStandardMaterial && m.userData?.wet)) wet++;
+    });
+    g.applyQuality('high');
+    delete window.__wet;
+    return { meshes, wet };
+  });
+
+  const result = { street, fire, low };
+  if (street.materials < 1) throw new Error(`no asphalt is wet: ${JSON.stringify(result)}`);
+  if (street.changed < 0.03) throw new Error(`drying the street changes ${(street.changed * 100).toFixed(2)}% of the road: ${JSON.stringify(result)}`);
+  if (!fire) throw new Error('no drum with a clear run of road in front of it');
+  if (fire.handed < 1) throw new Error(`no flame handed to the shader: ${JSON.stringify(result)}`);
+  if (fire.warmer < 0.002) throw new Error(`the fire is not in the wet road: ${(fire.warmer * 100).toFixed(3)}% warmer: ${JSON.stringify(result)}`);
+  if (fire.blown) throw new Error('a blown drum is still reflected');
+  if (low.wet > 0) throw new Error(`${low.wet} meshes drawn wet on the low tier`);
+  return result;
+});
+
 check('weeds grow where they can stand, and stay off the low tier', async (page) => {
   // The overgrowth is decoration: in neither collision list, placed by the
   // city's private generator, so it must only grow where something could —
