@@ -5206,11 +5206,48 @@ check('the sky has weather in it', async (page) => {
         n++;
       }
     }
-    return { contrast: +(edge / n).toFixed(2) };
+    // and the cloud's shaded underside, all the way round, low over the
+    // horizon where the thick cores stand: a bruise is cloud darker than the
+    // clear sky it hangs in, so every pixel is read against the same dome
+    // drawn with no cloud. Measured on seed 1 from the worst view: 0.34 with
+    // a fixed slate underside, 0.80 with the sky's own.
+    const clear = new THREE.ShaderMaterial({
+      uniforms: g.sky.material.uniforms,
+      vertexShader: g.sky.material.vertexShader,
+      fragmentShader: g.sky.material.fragmentShader.replace('ashClouds(d, ashAtmosphere(d, 1.0))', 'ashAtmosphere(d, 1.0)'),
+      side: THREE.BackSide, depthWrite: false,
+    });
+    const bare = new THREE.Scene();
+    bare.add(new THREE.Mesh(g.sky.geometry, clear));
+    const draw = (sc) => {
+      const rt2 = new THREE.WebGLRenderTarget(W, H);
+      g.renderer.setRenderTarget(rt2);
+      g.renderer.render(sc, cam);
+      const px = new Uint8Array(W * H * 4);
+      g.renderer.readRenderTargetPixels(rt2, 0, 0, W, H, px);
+      g.renderer.setRenderTarget(null);
+      rt2.dispose();
+      return px;
+    };
+    const L = (p, i) => 0.2126 * p[i] + 0.7152 * p[i + 1] + 0.0722 * p[i + 2];
+    const dark = [];
+    for (let k = 0; k < 8; k++) {
+      cam.lookAt(Math.sin(k * Math.PI / 4), 0.1, Math.cos(k * Math.PI / 4));
+      const sky = draw(bare), cloud = draw(scene);
+      let worst = 9;
+      for (let i = 0; i < sky.length; i += 4) {
+        const c = L(sky, i);
+        if (c > 20 && c < 250) worst = Math.min(worst, L(cloud, i) / c);
+      }
+      dark.push(+worst.toFixed(3));
+    }
+    clear.dispose();
+    return { contrast: +(edge / n).toFixed(2), dark };
   });
   // Measured on seed 1: 3.07 with cloud, 0.11 with the cloud function
   // returning the clear sky it was given.
   expect(r.contrast > 1, `the sky away from the sun is a plain gradient (contrast ${r.contrast})`);
+  expect(Math.min(...r.dark) > 0.5, `the cloud has a bruise in it: its darkest is ${r.dark.join(', ')} of the clear sky behind it`);
   return r;
 });
 
@@ -5336,6 +5373,196 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
   expect(r.clock, 'the ash and the smoke do not run on game time');
   expect(!r.listed, 'the ash or the smoke is a raycast target');
   expect(r.lowDraws > 0 && r.lowDraws < r.highDraws, `low draws ${r.lowDraws} flakes against high's ${r.highDraws}`);
+  return r;
+});
+
+check('the air carries the light: shafts from the sun, ash on what faces up, heat over a fire', { weight: 3 }, async (page) => {
+  // Three things in the air, each a pass that is easy to get quietly wrong.
+  // Light shafts are blurred out of the sky round the sun and added in the
+  // composite: they must be there looking toward the sun, nothing looking
+  // away, and never on the gun, which is drawn after the world. Settled ash
+  // is a shader define on the city's materials: it must grey what faces the
+  // sky and leave walls alone. Heat over a burning drum is a mask the
+  // composite bends the frame through: it must stand over the drum, not on
+  // it, and go wherever something nearer stands in front of it.
+  //
+  // Every pair of frames is its own evaluate, as in the ash check.
+  await page.evaluate(async () => {
+    const THREE = await import('three');
+    const { SUN_DIR } = await import('/src/atmosphere.js');
+    const g = window.__game;
+    g.startRun();
+    g.applyQuality('high');
+    g.renderer.setPixelRatio(g.renderer.getPixelRatio() / 2);
+    g.resize();
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    for (let i = 0; i < 5; i++) { g.time += 1 / 60; g.step(1 / 60); }
+    const gl = g.renderer.getContext();
+    const frame = () => {
+      g.updateAsh();
+      g.render();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return { px, w, h };
+    };
+    const lum = (p, i) => p[i] * 0.3 + p[i + 1] * 0.5 + p[i + 2] * 0.2;
+    // the share of pixels (rows y0..y1 of the frame, 0 the bottom) that differ
+    const share = (a, b, y0 = 0, y1 = 1, mask = null) => {
+      let n = 0, of = 0;
+      const r0 = Math.floor(a.h * y0), r1 = Math.floor(a.h * y1);
+      for (let y = r0; y < r1; y++) for (let x = 0; x < a.w; x++) {
+        const k = y * a.w + x;
+        if (mask && !mask[k]) continue;
+        of++;
+        if (Math.abs(lum(a.px, k * 4) - lum(b.px, k * 4)) > 6) n++;
+      }
+      return of ? n / of : 0;
+    };
+    const look = (x, y, z, tx, ty, tz) => {
+      g.camera.position.set(x, y, z);
+      g.camera.lookAt(tx, ty, tz);
+      g.camera.updateMatrixWorld();
+    };
+    const keep = g.updateAir.bind(g);
+    window.__air = { THREE, SUN_DIR, g, frame, share, look, keep };
+  });
+
+  // Shafts toward the sun from the plaza, with the gun in the frame: the
+  // same frame with the shafts' strength put to nothing. The gun is where
+  // the scene's depth holds something once the world's depth is cleared,
+  // read straight off that buffer.
+  const toward = await page.evaluate(() => {
+    const { THREE, SUN_DIR, g, frame, share, look, keep } = window.__air;
+    look(-17, 1.9, 24, -17 + SUN_DIR.x * 50, 1.9 + SUN_DIR.y * 40, 24 + SUN_DIR.z * 50);
+    const on = frame();
+    const strength = g.post.fx.sun.strength;
+    const post = g.post, t = post.targets, w = t.scene.width, h = t.scene.height;
+    const out = new THREE.WebGLRenderTarget(w, h, { type: THREE.FloatType });
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { t: { value: t.scene.depthTexture } },
+      vertexShader: post.blurMat.vertexShader,
+      fragmentShader: 'uniform sampler2D t; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(t, vUv).x, 0.0, 0.0, 1.0); }',
+      depthTest: false, depthWrite: false,
+    });
+    post._draw(mat, out);
+    const depth = new Float32Array(w * h * 4);
+    g.renderer.readRenderTargetPixels(out, 0, 0, w, h, depth);
+    out.dispose(); mat.dispose();
+    g.updateAir = () => { keep(); g.post.fx.sun.strength = 0; };
+    const off = frame();
+    g.updateAir = keep;
+    if (w !== on.w || h !== on.h) return { strength, frame: share(on, off), gun: 1, guns: -1 };
+    const gun = new Uint8Array(w * h);
+    let guns = 0;
+    for (let k = 0; k < gun.length; k++) if (depth[k * 4] < 0.99999) { gun[k] = 1; guns++; }
+    return { strength, frame: share(on, off), gun: share(on, off, 0, 1, gun), guns };
+  });
+  const away = await page.evaluate(() => {
+    const { SUN_DIR, g, frame, share, look, keep } = window.__air;
+    look(-17, 1.9, 24, -17 - SUN_DIR.x * 50, 1.9, 24 - SUN_DIR.z * 50);
+    const on = frame();
+    const strength = g.post.fx.sun.strength;
+    g.updateAir = () => { keep(); g.post.fx.sun.strength = 0; };
+    const off = frame();
+    g.updateAir = keep;
+    return { strength, frame: share(on, off) };
+  });
+
+  // Settled ash: straight down onto the plaza from 3 m, and level along a
+  // street, where the top half of the frame is walls and sky and nothing
+  // that faces up is above the eye.
+  const ash = await page.evaluate(() => {
+    const { g, frame, share, look } = window.__air;
+    const toggle = (on) => {
+      for (const m of g.settled) {
+        if (on) m.defines.ASH_SETTLE = ''; else delete m.defines.ASH_SETTLE;
+        m.needsUpdate = true;
+      }
+    };
+    look(-17, 3.3, 24, -17, 0, 24.01);
+    const downOn = frame(); toggle(false); const downOff = frame(); toggle(true);
+    look(-17, 1.6, 6, 30, 1.6, 6);
+    const levelOn = frame(); toggle(false); const levelOff = frame(); toggle(true);
+    return { marked: g.settled.length, down: share(downOn, downOff), walls: share(levelOn, levelOff, 0.55, 1) };
+  });
+
+  // Heat: the drum nearest the plaza, from 6 m on clear ground, and then
+  // the same with a board held up a metre in front of the camera.
+  const heat = await page.evaluate(async () => {
+    const { THREE, g, frame, look } = window.__air;
+    const bs = [...g.barrels.list].sort((a, b) => Math.hypot(a.x + 17, a.z - 24) - Math.hypot(b.x + 17, b.z - 24));
+    let at = null;
+    outer: for (const b of bs) for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4, px = b.x + Math.cos(a) * 6, pz = b.z + Math.sin(a) * 6;
+      if (g.world.occupied(px, pz, 0.6, 0.3)) continue;
+      const y = g.world.groundHeight(px, pz, 0.12, 2) + 1.6;
+      if (!g.world.lineOfSight(px, y, pz, b.x, b.y + 2, b.z)) continue;
+      at = { b, px, pz, y }; break outer;
+    }
+    if (!at) return null;
+    const { b, px, pz, y } = at;
+    look(px, y, pz, b.x, b.y + 1.6, b.z);
+    const read = () => {
+      const post = g.post, t = post.targets;
+      const w = t.quarter.w, h = t.quarter.h;
+      const out = new t.bright.constructor(w, h, { type: THREE.FloatType });
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { t: { value: t.heat.texture } },
+        vertexShader: post.blurMat.vertexShader,
+        fragmentShader: 'uniform sampler2D t; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(t, vUv).r, 0.0, 0.0, 1.0); }',
+        depthTest: false, depthWrite: false,
+      });
+      post._draw(mat, out);
+      const buf = new Float32Array(w * h * 4);
+      g.renderer.readRenderTargetPixels(out, 0, 0, w, h, buf);
+      out.dispose(); mat.dispose();
+      return (u, v) => buf[(Math.min(h - 1, Math.max(0, Math.floor(v * h))) * w + Math.min(w - 1, Math.max(0, Math.floor(u * w)))) * 4];
+    };
+    frame();
+    const f = g.post.fx.fires[0];
+    if (!f) return { fires: 0 };
+    const at1 = read();
+    const mid = (f.v0 + f.v1) / 2;
+    const { BARREL } = await import('/src/barrels.js');
+    const onDrum = new THREE.Vector3(b.x, b.y + BARREL.height * 0.6, b.z).project(g.camera);
+    const over = at1(f.u, mid), drum = at1(onDrum.x * 0.5 + 0.5, onDrum.y * 0.5 + 0.5), aside = at1(f.u + f.w * 3, mid);
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ color: 0x404040 }));
+    board.position.copy(g.camera.position).addScaledVector(g.camera.getWorldDirection(new THREE.Vector3()), 1);
+    board.quaternion.copy(g.camera.quaternion);
+    g.scene.add(board);
+    frame();
+    const behind = read()(f.u, mid);
+    g.scene.remove(board); board.geometry.dispose(); board.material.dispose();
+    return { fires: g.post.fx.fires.length, over, drum, aside, behind };
+  });
+
+  const pct = (v) => +(v * 100).toFixed(3);
+  const r3 = (v) => +(+v).toFixed(3);
+  const r = {
+    toward: { strength: r3(toward.strength), frame: pct(toward.frame), gun: pct(toward.gun), guns: toward.guns },
+    away: { strength: r3(away.strength), frame: pct(away.frame) },
+    ash: { marked: ash.marked, down: pct(ash.down), walls: pct(ash.walls) },
+    heat: heat && { fires: heat.fires, over: r3(heat.over), drum: r3(heat.drum), aside: r3(heat.aside), behind: r3(heat.behind) },
+  };
+  // Measured on seed 1: the shafts 0.36 strong toward the sun, changing 26%
+  // of the frame and none of the gun's pixels; plaza 40% dusted from above
+  // and the street's walls not at all. Each confirmed to fail: the shafts
+  // added over the gun (18% of its pixels), shafts with no regard to where
+  // the sun is (0.36 strong facing away), ash on every face whatever it
+  // faces (25% of the walls), and heat with no depth test (0.93 over a
+  // board held in front of the fire).
+  expect(r.toward.strength > 0.2 && r.toward.frame > 2, `looking at the sun the shafts are ${r.toward.strength} strong and change ${r.toward.frame}% of the frame`);
+  expect(r.toward.guns > 200 && r.toward.gun < 0.5, `the shafts change ${r.toward.gun}% of the gun's ${r.toward.guns} pixels`);
+  expect(r.away.strength === 0 && r.away.frame === 0, `looking away from the sun the shafts are ${r.away.strength} strong and change ${r.away.frame}%`);
+  expect(r.ash.marked > 10, `only ${r.ash.marked} city materials take the ash`);
+  expect(r.ash.down > 5, `settled ash changes ${r.ash.down}% of the plaza seen from above`);
+  expect(r.ash.walls < r.ash.down / 20, `settled ash changes ${r.ash.walls}% of the walls along a street, against ${r.ash.down}% of the plaza`);
+  expect(r.heat && r.heat.fires > 0, 'no burning drum in front of the camera for the heat');
+  expect(r.heat.over > 0.5, `the heat over a drum is ${r.heat.over}`);
+  expect(r.heat.drum < 0.05 && r.heat.aside < 0.05, `heat stands on the drum (${r.heat.drum}) or beside the column (${r.heat.aside})`);
+  expect(r.heat.behind < 0.05, `heat bends a board held in front of the fire (${r.heat.behind})`);
   return r;
 });
 

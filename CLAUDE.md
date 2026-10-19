@@ -81,9 +81,9 @@ builds, never to play.
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
 | `src/textures.js` | Every texture, painted to canvas at boot |
 | `src/shapes.js` | Chamfers, lofts, side profiles, lathes, creased normals, merging — the shapes that are not boxes |
-| `src/post.js` | Ambient occlusion, bloom, tone mapping, grade, vignette, grain |
-| `src/atmosphere.js` | The sky, the sun and the fog — one model, so they agree |
-| `src/ash.js` | The ash falling round the camera and the smoke columns over the city, and the roof map that keeps ash out of buildings |
+| `src/post.js` | Ambient occlusion, light shafts, heat shimmer, bloom, tone mapping, grade, vignette, grain |
+| `src/atmosphere.js` | The sky, the sun and the fog — one model, so they agree — and the ash settled on whatever faces up |
+| `src/ash.js` | The ash falling round the camera and the smoke columns over the city, the roof map that keeps ash out of buildings, and which materials the settled ash goes on |
 | `src/shadows.js` | The sun's two shadow cascades, snapped to their texels |
 | `src/windows.js` | Window openings traced in the facade shader: reveal, glass, room |
 | `src/audio.js` | Every sound, synthesised via Web Audio |
@@ -1368,6 +1368,39 @@ These each cost real debugging time. Changing them needs a reason.
   blue to a smoke-stained slate of the same brightness in the same pass, and
   the hemisphere's sky colour with it, so the light the city gets is
   unmoved and the low tier still matches.
+- **The air is drawn in the post chain and on the materials, never as
+  geometry.** Four things, all on high and medium (the tiers with occlusion,
+  because three of them read its depth texture) and none on low. **Light
+  shafts** (`FX_SKY_FRAG`, `FX_RAYS_FRAG`): the sky near the sun, picked out
+  of the scene where the depth is the far plane, blurred toward the sun's
+  place on screen twice at a quarter resolution and added in the composite.
+  `updateAir` in `main.js` hands it the sun's place and a strength that is
+  nothing until the sun is near the frame and you face it (`AIR.shafts`):
+  at 0.55 and a 0.6 margin, a view down onto the city with the sun out of
+  frame went milky. **The gun is masked by depth**: after the world is drawn
+  the scene's depth is cleared and the gun drawn, so the depth texture holds
+  only the gun, and the composite adds nothing and bends nothing where it is.
+  **Heat over a burning drum** (`FX_HEAT_FRAG`): up to four drums within
+  40 m in front of you, nearest first, a column from 0.8 m over the drum to
+  3.4 m, masked against the depth so a wall in front of the fire is not
+  bent; the composite reads the scene a little to one side through it. The
+  wobble is 0.0014 of the frame at most and about sixty cycles a frame's
+  height: at 0.0032 and 210 it was a sawtooth down the smoke. Every pass
+  runs every frame, sun or no sun, so all of them compile at boot. **Ash
+  settled on what faces up** (`ASH_SETTLE`, in `normal_fragment_maps`): a
+  define `settleAsh` sets on the city's and the outskirts' standard
+  materials that are opaque and rough (52 on seed 1), greying what faces the
+  sky in drifts off a world-space field, more on roofs than the street,
+  after the normal map so it lies in the dips. A define, not a uniform,
+  because a hostile walks through the field and it would slide over it; it
+  is set at boot before the compile, and the low tier's Lambert twins leave
+  it off: lit by the plain hemisphere it doubled that frame's brightness
+  (152.7 against 80.5 in `the low tier draws plainly`). **The clouds' undersides are the sky dimmed** (`ashClouds`): a fixed
+  slate underside was darker than the sky behind any thick cloud, and read
+  as a bruise on the lens. None of it mints an object outside `_allocate`'s
+  `reserve` or draws from `Math.random`, so the layout and the mark after
+  boot are unchanged. `the air carries the light` and the bruise measure in
+  `the sky has weather in it` guard it; the State section has what it cost.
 - **Water is a mirror for the sky and not for the sun; litter and puddles
   lie on one level or not at all.** A puddle (`puddles` in `city.js`) is a
   near-black fan at roughness 0.06, so it shows the environment map — the
@@ -2550,6 +2583,23 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the falling ash was four looks offered from a list and
+taken together: light shafts through the dust, ash settled on the ground,
+heat shimmer over the fires, and the dark smudges in the clouds. All four
+are the air invariant above. Two things worth keeping. Every effect was
+tuned against rendered frames, before and after, and each first cut was
+wrong in a way only a frame showed: the shafts a milky veil over a city
+seen from a roof with the sun out of frame, the ash paling the whole city,
+the shimmer a sawtooth down the smoke. And the bruise measure took three
+tries before it bit: the darkest of the frame, then the darkest against its
+neighbours, both read the gaps between lit clouds and passed the old
+clouds; it reads every pixel against the same dome drawn with no cloud now.
+What it cost, seed 1 under software rendering against `main`, three views
+on each tier, twice: high 3,825-4,202 → 3,866-4,289 ms a frame, low
+494-556 → 487-595, both within noise; three quarter-resolution passes a
+frame on high and medium, nothing on low. The layout, the prints and the
+mark after boot are unchanged.
 
 The pass after the crowded lots was asked as "what's next to make this
 cool?", and the answer taken was four things a fight feels rather than
