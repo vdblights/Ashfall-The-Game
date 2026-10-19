@@ -128,7 +128,22 @@ const EYE_CROUCH = 1.05;
 const GRAVITY = 22;
 const STEP_HEIGHT = 0.55;      // how high you can walk up without jumping
 const BODY_HEIGHT = 1.85;      // feet to the crown, for ceilings
-const FALL_SAFE = 13;          // impact speed you can absorb unhurt (~4 m drop)
+// A fall is judged by the height it was dropped from — the highest the feet
+// were since they left the ground, so a jump off a roof counts its apex too.
+// Not by the speed it lands at: the step integrates a fall a frame ahead of
+// the curve, so a 9 m drop landed at the speed of 7.6 m.
+// Under FALL.safe it costs nothing: a car roof, a crate, a jump off a shop's
+// counter. Past it the bill climbs faster than the height (`curve`), so
+// stepping off a container stack stings and a three-storey roof leaves you
+// on your last legs; from FALL.lethal it is a full health bar, which is
+// every stair roof of four storeys and up (they reach 14 m).
+export const FALL = { safe: 3.5, lethal: 11, curve: 1.5 };
+/** What a drop of `h` metres costs, out of a 100-point health bar. */
+export function fallDamage(h) {
+  if (h <= FALL.safe) return 0;
+  const k = Math.min(1, (h - FALL.safe) / (FALL.lethal - FALL.safe));
+  return k >= 1 ? 100 : Math.round(100 * Math.pow(k, FALL.curve));
+}
 const MANTLE_HEIGHT = 1.8;     // highest ledge you can haul yourself onto
 const WIND_BACK = 0.33;        // stamina back before a winded sprint picks up again
 // A pull-up runs at a roughly constant climb rate rather than a fixed
@@ -193,6 +208,7 @@ export class Player {
     // plaza you start in is a slab, not the street
     this.feetY = this.world.groundHeight(x, z, SUPPORT_RADIUS, STEP_HEIGHT);
     this.position.set(x, this.feetY + EYE_STAND, z);
+    this.fallTop = this.feetY;
     this.velocity.set(0, 0, 0);
     this.eyeHeight = EYE_STAND;
     this.onGround = true;
@@ -421,11 +437,13 @@ export class Player {
     // asked only at where the fall ended goes straight through whatever it
     // crossed on the way. On the street that was a frame's dip under the kerb
     // before the step-up caught it; on a roof it was the street.
+    this.fallTop = this.onGround ? before : Math.max(this.fallTop, before);
     const ceiling = this.onGround ? this.feetY + STEP_HEIGHT : Math.max(this.feetY, before) + 0.02;
     const support = this.world.groundHeight(this.position.x, this.position.z, SUPPORT_RADIUS, ceiling);
     if (this.feetY <= support + 1e-4) {
-      if (this.velocity.y < -FALL_SAFE && this.onFallDamage) {
-        this.onFallDamage(Math.round((-this.velocity.y - FALL_SAFE) * 6));
+      if (!this.onGround && this.onFallDamage) {
+        const hurt = fallDamage(this.fallTop - support);
+        if (hurt > 0) this.onFallDamage(hurt);
       }
       // Walking up a step moves the feet onto it at once, which is right, and
       // used to move the view with them, which is not: every kerb in the city

@@ -144,6 +144,56 @@ export function installAtmosphere() {
         float k = abs(dy) > 1e-3 ? (1.0 - exp(-b * dy)) / (b * dy) : 1.0;
         return fogDensity * exp(-b * max(y0, 0.0)) * k * dist;
       }
+
+      #ifdef ASH_SETTLE
+        float ashSettleHash(vec2 p) {
+          p = fract(p * vec2(233.34, 851.73));
+          p += dot(p, p + 23.45);
+          return fract(p.x * p.y);
+        }
+        float ashSettleNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(ashSettleHash(i), ashSettleHash(i + vec2(1.0, 0.0)), u.x),
+                     mix(ashSettleHash(i + vec2(0.0, 1.0)), ashSettleHash(i + vec2(1.0, 1.0)), u.x), u.y);
+        }
+      #endif
+    #endif
+  `;
+  // Ash that has come down and stayed, on whatever faces the sky: a pale
+  // dusting over the roofs, the ledges, the car roofs and the street, drifted
+  // into patches by a field in world space, so it lies across the joins
+  // between surfaces rather than repeating with any texture. Only materials
+  // that ask for it (ASH_SETTLE, set by settleAsh in ash.js on the city's own
+  // batches) carry it: a hostile walks through world space, and a field fixed
+  // to the world would slide over it. Applied after the normal map, so the
+  // dust sits in the dips of a surface and leaves its ridges bare, and before
+  // the lights, so it is lit and shadowed as the surface is. It costs no
+  // geometry and no texture, and draws nothing from the seeded stream.
+  C.normal_fragment_maps += /* glsl */`
+    #if defined(ASH_SETTLE) && defined(USE_FOG)
+    {
+      vec3 ashUp = normalize(viewMatrix[1].xyz);
+      float ashFacing = smoothstep(0.55, 0.93, dot(normal, ashUp));
+      vec2 ashP = vFogWorld.xz;
+      float ashDrift = ashSettleNoise(ashP * 0.31) * 0.62 + ashSettleNoise(ashP * 1.37 + 17.0) * 0.38;
+      float ashFine = ashSettleNoise(ashP * 6.1 - 4.0);
+      // nobody has walked on a roof in years: more of it lies up there
+      float ashHigh = mix(1.0, 1.25, smoothstep(2.5, 7.0, vFogWorld.y));
+      float ashAmt = ashFacing * ashHigh
+        * (0.05 + 0.34 * smoothstep(0.42, 0.8, ashDrift)) * (0.75 + 0.5 * ashFine);
+      ashAmt = clamp(ashAmt, 0.0, 0.5);
+      // the baked occlusion still darkens it where a wall keeps the sky off
+      vec3 ashCol = vec3(0.235, 0.228, 0.22);
+      #ifdef USE_COLOR
+        ashCol *= clamp(dot(vColor.rgb, vec3(0.3333)) * 1.15, 0.35, 1.0);
+      #endif
+      diffuseColor.rgb = mix(diffuseColor.rgb, ashCol, ashAmt);
+      #ifdef STANDARD
+        roughnessFactor = mix(roughnessFactor, 1.0, ashAmt);
+        metalnessFactor = mix(metalnessFactor, 0.0, ashAmt);
+      #endif
+    }
     #endif
   `;
   C.fog_fragment = /* glsl */`
@@ -235,11 +285,16 @@ const CLOUD_GLSL = /* glsl */`
     // self-shadow: the same cloud a few hundred metres toward the sun
     vec2 toSun = normalize(ASH_SUN.xz) * 0.35;
     float shade = cloudCover(p + toSun, warp, detail - 1);
-    float lit = clamp(1.0 - shade * 0.85 + (1.0 - cover) * 0.35, 0.0, 1.0);
+    float lit = clamp(1.0 - shade * 0.7 + (1.0 - cover) * 0.35, 0.0, 1.0);
 
-    vec3 belly = vec3(0.080, 0.070, 0.078);           // slate, a touch violet
+    // The belly is the sky it hangs in, dimmed, never a fixed slate. A fixed
+    // near-black belly was darker than any sky behind it, so the thick middle
+    // of a pale cloud came out a dark bruise, a smudge on the lens rather than
+    // a cloud in shade. Light under a cloud is the sky's own light, scattered
+    // a little cooler, so the shadowed side keeps the sky's value and hue.
+    vec3 belly = sky * vec3(0.66, 0.64, 0.70) + vec3(0.012, 0.011, 0.013);
     vec3 sunlit = vec3(0.78, 0.47, 0.27);              // the light's own gold, at dusk
-    vec3 col = mix(belly, sunlit, lit * lit);
+    vec3 col = mix(belly, max(sunlit, sky), lit * lit);
 
     // thin cloud near the sun lets the glow through: a bright rim, not a hole
     float mu = dot(d, ASH_SUN);

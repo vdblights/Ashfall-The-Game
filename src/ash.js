@@ -367,6 +367,39 @@ const EMBER_FRAG = /* glsl */`
   }
 `;
 
+/* ----------------------------------------------------------------- settled */
+
+/**
+ * Ash that has come down and stayed, on the city's own surfaces.
+ *
+ * The shading is a few lines in the lit materials' fragment shader (see
+ * `installAtmosphere`), behind a define so only the materials that should
+ * carry it compile it: the city's batches and the outskirts, never a
+ * hostile, whose surface moves through the world-space field. Left out:
+ * anything cut out or see-through (weeds, glass, the fire escapes' grating),
+ * and anything smooth enough to be wet or glazed — a puddle under a dusting
+ * of ash is not a puddle any more. The define is part of the program's key,
+ * so it has to be set before anything is compiled, which is at boot, and the
+ * low tier's Lambert twins copy it (`twinOf`). Returns the materials marked.
+ */
+export function settleAsh(...roots) {
+  const marked = new Set();
+  for (const root of roots) {
+    root?.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m?.isMeshStandardMaterial || marked.has(m)) continue;
+        if (m.transparent || m.alphaTest > 0 || m.roughness < 0.3) continue;
+        if (m.userData.noAsh) continue;
+        m.defines = { ...(m.defines || {}), ASH_SETTLE: '' };
+        m.needsUpdate = true;
+        marked.add(m);
+      }
+    });
+  }
+  return [...marked];
+}
+
 /* -------------------------------------------------------------------- both */
 
 export class Ashfall {

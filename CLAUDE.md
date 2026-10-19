@@ -11,7 +11,7 @@ Read `README.md` first for what the game *is*. This file is for changing it.
 ```bash
 npm start                      # serve at http://localhost:8000 (no deps needed)
 npm test                       # the headless suite (needs npm install first)
-npm test -- --shard=2/4        # every fourth check from the second, as CI runs it
+npm test -- --shard=2/6        # the second of six weighted slices, as CI runs it
 npm test -- --only=auto        # just the checks whose name contains "auto"
 npm test -- --only="a|b"       # either, in suite order, in one browser
 npm run build                  # one-file dist/ashfall.html, no external refs
@@ -81,9 +81,9 @@ builds, never to play.
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
 | `src/textures.js` | Every texture, painted to canvas at boot |
 | `src/shapes.js` | Chamfers, lofts, side profiles, lathes, creased normals, merging — the shapes that are not boxes |
-| `src/post.js` | Ambient occlusion, bloom, tone mapping, grade, vignette, grain |
-| `src/atmosphere.js` | The sky, the sun and the fog — one model, so they agree |
-| `src/ash.js` | The ash falling round the camera and the smoke columns over the city, and the roof map that keeps ash out of buildings |
+| `src/post.js` | Ambient occlusion, light shafts, heat shimmer, bloom, tone mapping, grade, vignette, grain |
+| `src/atmosphere.js` | The sky, the sun and the fog — one model, so they agree — and the ash settled on whatever faces up |
+| `src/ash.js` | The ash falling round the camera and the smoke columns over the city, the roof map that keeps ash out of buildings, and which materials the settled ash goes on |
 | `src/shadows.js` | The sun's two shadow cascades, snapped to their texels |
 | `src/windows.js` | Window openings traced in the facade shader: reveal, glass, room |
 | `src/audio.js` | Every sound, synthesised via Web Audio |
@@ -784,6 +784,18 @@ These each cost real debugging time. Changing them needs a reason.
   triangles' centres were inside the block, so the check never sampled it.
   At 27 cm the strip is narrower than a foot, which the check already
   skips, and the rim you see is the same.
+- **A fall is judged by its height, and from a roof it kills.** It was
+  judged by impact speed past 13 m/s at 6 points a m/s, so the 14 m stair
+  roofs cost 71 and nothing in the sector could kill you. `FALL` and
+  `fallDamage` in `player.js`: nothing under 3.5 m, a full bar from 11 m,
+  rising as the 1.5 power between (6 m costs 19, 9 m 63). The height is the
+  feet's highest since they left the ground (`fallTop`), not worked back from
+  the landing speed: the step integrates a fall a frame ahead of the curve,
+  and a 9 m drop landed at the speed of 7.6 m. A plate carrier does not break
+  a fall (`damagePlayer`'s `unarmoured`). `a fall hurts by its height, and
+  from a roof it kills` drops from 3.2 to 14 m on an open spot — (0, 0) has a
+  prop a metre up, which read a 9 m drop as 8 — and fails on the old rule (9 m
+  left 59 health).
 - **Sprint stops when you run dry and stays stopped until a third is
   back** (`WIND_BACK`, `player.winded`). It used to cut out at an empty
   bar and come back a frame later with the key held, every frame: the gun
@@ -1380,6 +1392,39 @@ These each cost real debugging time. Changing them needs a reason.
   blue to a smoke-stained slate of the same brightness in the same pass, and
   the hemisphere's sky colour with it, so the light the city gets is
   unmoved and the low tier still matches.
+- **The air is drawn in the post chain and on the materials, never as
+  geometry.** Four things, all on high and medium (the tiers with occlusion,
+  because three of them read its depth texture) and none on low. **Light
+  shafts** (`FX_SKY_FRAG`, `FX_RAYS_FRAG`): the sky near the sun, picked out
+  of the scene where the depth is the far plane, blurred toward the sun's
+  place on screen twice at a quarter resolution and added in the composite.
+  `updateAir` in `main.js` hands it the sun's place and a strength that is
+  nothing until the sun is near the frame and you face it (`AIR.shafts`):
+  at 0.55 and a 0.6 margin, a view down onto the city with the sun out of
+  frame went milky. **The gun is masked by depth**: after the world is drawn
+  the scene's depth is cleared and the gun drawn, so the depth texture holds
+  only the gun, and the composite adds nothing and bends nothing where it is.
+  **Heat over a burning drum** (`FX_HEAT_FRAG`): up to four drums within
+  40 m in front of you, nearest first, a column from 0.8 m over the drum to
+  3.4 m, masked against the depth so a wall in front of the fire is not
+  bent; the composite reads the scene a little to one side through it. The
+  wobble is 0.0014 of the frame at most and about sixty cycles a frame's
+  height: at 0.0032 and 210 it was a sawtooth down the smoke. Every pass
+  runs every frame, sun or no sun, so all of them compile at boot. **Ash
+  settled on what faces up** (`ASH_SETTLE`, in `normal_fragment_maps`): a
+  define `settleAsh` sets on the city's and the outskirts' standard
+  materials that are opaque and rough (52 on seed 1), greying what faces the
+  sky in drifts off a world-space field, more on roofs than the street,
+  after the normal map so it lies in the dips. A define, not a uniform,
+  because a hostile walks through the field and it would slide over it; it
+  is set at boot before the compile, and the low tier's Lambert twins leave
+  it off: lit by the plain hemisphere it doubled that frame's brightness
+  (152.7 against 80.5 in `the low tier draws plainly`). **The clouds' undersides are the sky dimmed** (`ashClouds`): a fixed
+  slate underside was darker than the sky behind any thick cloud, and read
+  as a bruise on the lens. None of it mints an object outside `_allocate`'s
+  `reserve` or draws from `Math.random`, so the layout and the mark after
+  boot are unchanged. `the air carries the light` and the bruise measure in
+  `the sky has weather in it` guard it; the State section has what it cost.
 - **Water is a mirror for the sky and not for the sun; litter and puddles
   lie on one level or not at all.** A puddle (`puddles` in `city.js`) is a
   near-black fan at roughness 0.06, so it shows the environment map — the
@@ -1527,7 +1572,16 @@ These each cost real debugging time. Changing them needs a reason.
   box the wall piece it replaced did — `(x + mid) - len / 2`, not `x + a`,
   which is the same number in arithmetic and not in floating point, and the
   layout check's fingerprint, at a millimetre, read the difference as a
-  moved city. What it costs is the next item's table.
+  moved city. **No two parts of a container share a plane**: the folds'
+  troughs lay on the core's faces and the posts, castings, rails and sill
+  all ran out to the collider together, 19.8 m² of each container drawn
+  twice, which flickered in play as the view moved. The core stands 2 cm
+  behind the troughs, only the castings reach the collider, and the rails
+  and posts stop inside them with chamfers of their own — two 45° bevels
+  meet on one plane whenever their two offsets sum the same, which the
+  first fix missed. `steel is folded` asks every facet of the shape for
+  another on its plane, facing its way: 0 m², against 19.8 on `main`.
+  What it costs is the next item's table.
 - **A closed block's ground floor is shopfronts onto its streets.** It was
   one box of dark glass wrapped round the block, a black stripe down every
   street and every side. `storefront` in `city.js` builds the faces that
@@ -2577,6 +2631,23 @@ software rendering against `main`, three views twice each: triangles
 frame time 4,322-4,794 → 4,637-5,374 ms on high (+7-12%), which the
 `auto` ladder absorbs where a machine is short.
 
+The pass after the falling ash was four looks offered from a list and
+taken together: light shafts through the dust, ash settled on the ground,
+heat shimmer over the fires, and the dark smudges in the clouds. All four
+are the air invariant above. Two things worth keeping. Every effect was
+tuned against rendered frames, before and after, and each first cut was
+wrong in a way only a frame showed: the shafts a milky veil over a city
+seen from a roof with the sun out of frame, the ash paling the whole city,
+the shimmer a sawtooth down the smoke. And the bruise measure took three
+tries before it bit: the darkest of the frame, then the darkest against its
+neighbours, both read the gaps between lit clouds and passed the old
+clouds; it reads every pixel against the same dome drawn with no cloud now.
+What it cost, seed 1 under software rendering against `main`, three views
+on each tier, twice: high 3,825-4,202 → 3,866-4,289 ms a frame, low
+494-556 → 487-595, both within noise; three quarter-resolution passes a
+frame on high and medium, nothing on low. The layout, the prints and the
+mark after boot are unchanged.
+
 The pass after the crowded lots was asked as "what's next to make this
 cool?", and the answer taken was four things a fight feels rather than
 sees: fire barrels that blow, glass that breaks, a slide and a lean. Each
@@ -3587,8 +3658,8 @@ climb was right. `World.mantleTarget` is unchanged.
 
 CI runs the suite and the one-file build on every push to `main` and every PR
 (`.github/workflows/ci.yml`), and attaches the built `ashfall.html` to the run.
-The suite runs as four parallel shards (`--shard=i/4`, dealt round-robin),
-and the build only after all four pass. It was one job with a twenty-minute
+The suite runs as six parallel shards (`--shard=i/6`, dealt by weight), and
+the build only after all of them pass. It was one job with a twenty-minute
 limit until every run from #21 onward was cancelled at exactly twenty
 minutes: every check reboots the game, a boot is most of a check under
 software rendering, and two passes in a row added boot stages that draw
@@ -3597,6 +3668,32 @@ software frames deciding it could not measure one). **Anything added to
 boot is paid once per check**, and the suite prints each check's seconds so
 the bill is visible; a boot stage that draws should give up early when the
 frames say software.
+
+**What a check costs is mostly boots, so the runner spends fewer of them.**
+Measured on CI before the suite was reworked: four shards of 16.6, 24.3,
+18.2 and 20.4 minutes, nearly every check 33-37 s, and of that about 33 s
+boot — 13 s of it the warm-up frame at the end of `precompileStages`, one
+software frame with nothing culled, 9 s painting textures, 4 s laying out
+the city. Four things came out of that. The suite skips the warm-up frame
+(`suite` in `precompileStages`) unless the URL carries `?warm`, which a
+check asks for with `warm: true`: `nothing compiles at first contact`,
+because the frame is what it guards, and the layout check, because **the
+warm-up frame spends the seeded stream** — skipped, seed 1's mark after
+boot is 220091255 against the -1299344873 a player's boot leaves, and only
+the warm boot is pinned. A check marked `reads` only reads the booted
+game: they run first in their shard, one boot between them, and the runner
+digests the game before and after each (`digest`: the clock, the stream's
+mark, the tier and resolution, the camera, the player, the scene's and the
+world's counts, the programs) and fails one that changed it. The first
+check no longer reboots the game `openGame` just booted. And shards are
+dealt heaviest first to the lightest shard by `weight`, a check's CI cost
+in boots, 1 unless said: round-robin had put two of the three slow checks
+on one shard, eight minutes past the rest. Re-weight from the times the
+runner prints when a shard finishes well ahead of the others. After it, on
+CI: five shards ran their checks in 8.1-9.6 minutes and one in 4.8, and
+the whole run took ten minutes against twenty-five. The ash check draws at half the high tier's
+resolution, which a share of the frame does not notice (0.229% open, 0.015%
+indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
 minutes rather than the download. If the browser install ever starts failing,
 the harness falls back to `PLAYWRIGHT_BROWSERS_PATH` and `ASHFALL_CHROME`.

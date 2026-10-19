@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN, SECTOR, outskirtsHeight } from './city.js';
-import { Ashfall } from './ash.js';
+import { Ashfall, settleAsh } from './ash.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
 import { Player, Input, LEAN } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
@@ -106,6 +106,11 @@ const TWIN_PROPS = ['color', 'map', 'vertexColors', 'emissive', 'emissiveMap', '
   'depthWrite', 'depthTest', 'polygonOffset', 'polygonOffsetFactor', 'polygonOffsetUnits',
   'blending', 'fog', 'toneMapped', 'flatShading', 'wireframe', 'visible'];
 const RAY = new THREE.Raycaster();
+// The air the post chain draws: how strongly the sun pours through the dust,
+// and the hot column over a fire — how far off one is drawn, how wide and how
+// tall, in metres.
+const AIR = { shafts: 0.36, heatReach: 40, heatWidth: 0.55, heatBase: 0.8, heatRise: 3.4 };
+const AIR_P = new THREE.Vector3(), AIR_FWD = new THREE.Vector3();
 const SHADOW_AT = new THREE.Vector3();
 const SHADOW_AHEAD = new THREE.Vector3();
 
@@ -232,6 +237,9 @@ class Game {
         // the walls, neither of them in the bake
         this.doors = city.doors;
         this.outskirts = city.outer;
+        // the ash that has already come down, on everything that faces the
+        // sky; a define on the city's own materials, set before any compile
+        this.settled = settleAsh(this.city, this.outskirts);
 
         // Where hostiles can walk, and which way is toward you from anywhere
         // in the sector. Built once the city's boxes are final, and out of
@@ -425,7 +433,12 @@ class Game {
         // compiled program is not always a finished one, and the work some
         // drivers leave for its first draw is better spent here than at first
         // contact.
-        this.render();
+        //
+        // Not for the suite, unless a check asks (`?warm`): drawn in software,
+        // with nothing culled, this one frame was 13 s of every check's 33 s
+        // boot on CI, and the checks that never draw anything paid it too.
+        // The programs are built by the compile above either way.
+        if (!this.suite || new URLSearchParams(location.search).has('warm')) this.render();
         for (const o of shown) o.visible = false;
         for (const o of unculled) o.frustumCulled = true;
         for (const b of bodies.children) this.hostiles.untrack(b);
@@ -995,9 +1008,11 @@ class Game {
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
     this.player.onSlide = () => { audio.slide(); this.player.addShake(0.05); };
+    // A fall is a share of the health bar, and a plate carrier does not
+    // break one: armour is for rounds and shrapnel.
     this.player.onFallDamage = (amount) => {
       this.player.addShake(0.4);
-      this.damagePlayer(amount, null);
+      this.damagePlayer(amount * this.player.maxHealth / 100, null, true);
     };
     this.weapons.reset();
     this.score = 0;
@@ -1902,9 +1917,9 @@ class Game {
       armour === 'heavy' || armour === 'plated', e.pos.y > DECK_HEIGHT, (this.footfallN = (this.footfallN || 0) + 1));
   }
 
-  damagePlayer(amount, fromPos) {
+  damagePlayer(amount, fromPos, unarmoured = false) {
     if (this.state !== 'playing' || this.player.dead) return;
-    amount *= EFFECT.armour[this.kit.armour];
+    if (!unarmoured) amount *= EFFECT.armour[this.kit.armour];
     const died = this.player.damage(amount, this.time);
     audio.hurt();
 
@@ -2223,6 +2238,9 @@ class Game {
     t = new THREE.MeshLambertMaterial();
     for (const k of TWIN_PROPS) if (m[k] !== undefined) t[k] = m[k];
     t.name = m.name;
+    // no settled ash on low: under the plain hemisphere it is lit at ten
+    // times the strength the PBR frame gives it, and doubled the frame's
+    // brightness (152.7 against 80.5), and low is the tier kept plain
     t.userData = { ...m.userData, pbr: m };
     this.twins.set(m, t);
     return t;
@@ -2245,8 +2263,49 @@ class Game {
     }
   }
 
+  /**
+   * What the post chain's air needs from the world this frame: where the sun
+   * stands on screen and how strongly to pour it through the dust, and the
+   * nearest burning drums in front of the camera, projected, for the heat
+   * over them. Vectors only, no three object, nothing from the seeded stream.
+   */
+  updateAir() {
+    const cam = this.camera;
+    cam.getWorldDirection(AIR_FWD);
+    const facing = AIR_FWD.dot(SUN_DIR);
+    AIR_P.copy(cam.position).addScaledVector(SUN_DIR, 400).project(cam);
+    const u = AIR_P.x * 0.5 + 0.5, v = AIR_P.y * 0.5 + 0.5;
+    // fades as the sun leaves the frame, gone once it is well behind you
+    const out = Math.max(0, Math.abs(u - 0.5) - 0.5, Math.abs(v - 0.5) - 0.5);
+    const strength = facing <= 0 ? 0
+      : AIR.shafts * THREE.MathUtils.smoothstep(facing, 0.3, 0.8) * Math.max(0, 1 - out / 0.25);
+    const fx = this.airFx || (this.airFx = { sun: { x: 0.5, y: 0.5, strength: 0 }, fires: [] });
+    fx.sun.x = u; fx.sun.y = v; fx.sun.strength = strength;
+
+    fx.fires.length = 0;
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+    for (const b of this.barrels?.list || []) {
+      if (b.burst) continue;
+      AIR_P.set(b.x - cam.position.x, 0, b.z - cam.position.z);
+      const z = AIR_P.x * AIR_FWD.x + AIR_P.z * AIR_FWD.z;
+      if (z < 1 || z > AIR.heatReach) continue;
+      const top = b.y + BARREL.height;
+      AIR_P.set(b.x, top + AIR.heatBase, b.z).project(cam);
+      if (Math.abs(AIR_P.x) > 1.3 || AIR_P.z > 1) continue;
+      const u0 = AIR_P.x * 0.5 + 0.5, v0 = AIR_P.y * 0.5 + 0.5;
+      AIR_P.set(b.x, top + AIR.heatRise, b.z).project(cam);
+      const v1 = AIR_P.y * 0.5 + 0.5;
+      const w = AIR.heatWidth / (z * tanHalf * cam.aspect) * 0.5;
+      fx.fires.push({ u: u0, v0, v1, w, z });
+    }
+    fx.fires.sort((a, b) => a.z - b.z);
+    fx.fires.length = Math.min(fx.fires.length, 4);
+    this.post.fx = fx;
+  }
+
   render() {
     if (this.post.enabled) {
+      if (this.post.ao) this.updateAir();
       this.post.render(this.scene, this.camera, this.viewScene, this.viewCamera, this.time);
       return;
     }

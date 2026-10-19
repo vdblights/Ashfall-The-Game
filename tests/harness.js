@@ -323,8 +323,10 @@ export async function openGame(opts = {}) {
     // The city comes from the URL, so a check that needs a particular layout
     // — one that trips a bug the pinned seed happens not to — reboots on its
     // own seed rather than asserting against whatever the suite is pinned to.
-    reload: async ({ freeze: f = freeze, seed: s = seed } = {}) => {
-      await page.goto(`http://localhost:${port}/index.html?seed=${s}`, { waitUntil: 'load' });
+    // `warm` boots the way a player's browser does, with the warm-up frame
+    // the suite otherwise skips (see `precompileStages`).
+    reload: async ({ freeze: f = freeze, seed: s = seed, warm = false } = {}) => {
+      await page.goto(`http://localhost:${port}/index.html?seed=${s}${warm ? '&warm' : ''}`, { waitUntil: 'load' });
       await waitForBoot(page, { freeze: f, seed: s });
     },
     // A browser to replace one that has wedged. An offline audio render that
