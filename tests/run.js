@@ -143,7 +143,7 @@ check('every city material survives the bake', { reads: true }, async (page) => 
   return r;
 });
 
-check('the near shadow cascade draws the street it covers, not the city', { weight: 1.6 }, async (page) => {
+check('the near shadow cascade draws the street it covers, not the city', { weight: 1.2 }, async (page) => {
   // The bake used to merge the city into one mesh per material, each one
   // spanning the sector, so nothing in it could be culled: the near cascade
   // is 26 m across and drew every triangle of the city into its map, and the
@@ -2361,7 +2361,7 @@ check('a warlord stoops under a shop ceiling, and stands tall in the street', as
   return r;
 });
 
-check('a scripted run reaches wave 3 without stalling', { weight: 1.9 }, async (page) => {
+check('a scripted run reaches wave 3 without stalling', { weight: 1.4 }, async (page) => {
   const r = await page.evaluate(() => window.__botRun(240));
   expect(!r.scoreBroke, `score stopped being a number at t=${r.at}s`);
   expect(r.wave >= 3, `only reached wave ${r.wave} in four minutes`);
@@ -2377,7 +2377,7 @@ check('a scripted run reaches wave 3 without stalling', { weight: 1.9 }, async (
   return r;
 });
 
-check('a wave never deadlocks on a hostile that cannot path to you', { weight: 2.8 }, async (page) => {
+check('a wave never deadlocks on a hostile that cannot path to you', { weight: 2.2 }, async (page) => {
   // A hostile steers straight at the player and has no pathfinding, so with a
   // building in the way it slides along the wall face. Every per-window
   // measure the stuck watchdog had excused that — it covers ground, and the
@@ -2594,7 +2594,7 @@ check('a marksman is moved to a perch that overlooks you', { weight: 2 }, async 
   return r;
 });
 
-check('ambient occlusion darkens where things meet and leaves open ground alone', { weight: 1.7 }, async (page) => {
+check('ambient occlusion darkens where things meet and leaves open ground alone', { weight: 1.5 }, async (page) => {
   // Occlusion is only right if it does both. The pass is written once and
   // read twice: at the foot of a barrier there should be a pool of shade,
   // and on open pavement there should be nothing at all. The second half is
@@ -2692,7 +2692,7 @@ check('ambient occlusion darkens where things meet and leaves open ground alone'
   return r;
 });
 
-check('the sun reads a sharp shadow map near you, and it agrees with the wide one', { weight: 2.2 }, async (page) => {
+check('the sun reads a sharp shadow map near you, and it agrees with the wide one', { weight: 1.8 }, async (page) => {
   // The cascade is a rewrite of three's light loop that assumes the sun is
   // the first shadow-casting directional light and the cascade the second.
   // Nothing errors when that stops being true: the sun reads the wrong map,
@@ -2830,7 +2830,7 @@ check('the sky, the fog and the light are one atmosphere', { weight: 1.2 }, asyn
   return r;
 });
 
-check('a window is a hole in a wall, and only in a wall', { weight: 1.9 }, async (page) => {
+check('a window is a hole in a wall, and only in a wall', { weight: 1.7 }, async (page) => {
   // The windows are cut into the facade by its fragment shader (`windows.js`):
   // reveals, glass set back, a room behind a broken pane. Two ways for that to
   // go wrong, and both are silent. It can stop doing anything — the patch not
@@ -3062,7 +3062,7 @@ check('auto starts at the tier this machine can hold', async (page) => {
   return r;
 });
 
-check('a bad pixel stays one pixel, it does not bloom into a box', { weight: 2.1 }, async (page) => {
+check('a bad pixel stays one pixel, it does not bloom into a box', { weight: 1.7 }, async (page) => {
   // Reported from play as black boxes blinking in a line around the gun when
   // turning. It never reproduced here — no pixel in the chain went NaN or
   // past 1,000 over hundreds of swept frames under software rendering — but
@@ -3571,7 +3571,7 @@ check('steel is folded, a ruin is broken at the top, and rubble is a heap', { re
   return r;
 });
 
-check('some doorways have doors: shut, a door is a wall, and anyone can open one', { weight: 1.6 }, async (page) => {
+check('some doorways have doors: shut, a door is a wall, and anyone can open one', { weight: 1.3 }, async (page) => {
   // A share of the shops' doorways carry a pair of steel leaves
   // (`registerDoors`). Shut, a door has to be everything a wall is — to a
   // body walking at it, a sight line, a round and a grenade — and opened
@@ -3960,7 +3960,7 @@ check('a crate is boards in a frame, inside the box it registers', { reads: true
   return r;
 });
 
-check('rubble stops you and stops a bullet, and you can climb it', { weight: 2.2 }, async (page) => {
+check('rubble stops you and stops a bullet, and you can climb it', { weight: 2.3 }, async (page) => {
   // Reported from play: objects you can clip right through, rubble first.
   // Every heap of rubble and every fallen slab in a rubble lot was drawn and
   // registered nowhere — the slabs stopped bullets and not boots, the heaps
@@ -4599,7 +4599,7 @@ const CITY_FINGERPRINT = () => {
   };
 };
 
-check('nothing compiles at first contact', { warm: true, weight: 2.1 }, async (page) => {
+check('nothing compiles at first contact', { warm: true, weight: 2.4 }, async (page) => {
   // `renderer.compile` at boot compiled what was visible, which was the city.
   // Every hostile, every pooled tracer, casing and sprite, and the muzzle
   // flash — built lazily on the first shot — compiled on the first frame it
@@ -4721,7 +4721,7 @@ check('a slow frame is still real time, and the mouse moves once', async (page) 
   return r;
 });
 
-check('the low tier draws plainly: Lambert, no point lights, no canvas samples', { weight: 1.4 }, async (page) => {
+check('the low tier draws plainly: Lambert, no point lights, no canvas samples', { weight: 1.3 }, async (page) => {
   // Reported from play: 14 fps on an Intel HD, with auto already on low.
   // Low dropped shadows and post and kept everything else, and everything
   // else was most of it: every lit pixel ran the PBR model against the sky's
@@ -5597,7 +5597,7 @@ check('the air carries the light: shafts from the sun, ash on what faces up, hea
   return r;
 });
 
-check('a wet street holds the sky and the fire in it, and the low tier stays dry', { weight: 1.8 }, async (page) => {
+check('a wet street holds the sky and the fire in it, and the low tier stays dry', { weight: 1.9 }, async (page) => {
   // The wet asphalt and the puddles are a shader on their materials: wet
   // asphalt is darker and nearly smooth, so it shows the sky, and every wet
   // surface shows a smear of the nearest flames, worked out per pixel off
@@ -5837,7 +5837,7 @@ check('puddles and litter lie on the ground they are drawn on', { reads: true },
   return { puddles: r.puddles, litter: r.litter.verts / 4, shops: r.laid };
 });
 
-check('weeds move in the wind, and are still when time is', { weight: 1.4 }, async (page) => {
+check('weeds move in the wind, and are still when time is', { weight: 1.3 }, async (page) => {
   // A still frame of weeds reads as a photograph pasted on the street. The
   // tips sway on game time, so this draws the same view at one wind time
   // twice and at another once, with the post chain off so its grain is not
@@ -6414,7 +6414,7 @@ check('on a roof, two hostiles cover the stair door and are waiting when you com
   return r;
 });
 
-check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', { weight: 1.4 }, async (page) => {
+check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', { weight: 1.2 }, async (page) => {
   // Every lap of a stairwell lands at a floor of its building (`upperFloors`
   // in `city.js`): a slab you stand on, a ceiling, and walls of piers, sills
   // and lintels with the windows left open. This climbs every stairwell and
@@ -6667,7 +6667,7 @@ check('a building with a stairwell has floors: walked onto from the stair, seen 
   return { styles: [...styles], back: `${r.back.home}/${r.back.floors}, ${r.back.behind} behind the shaft`, drop: r.drop, floors: r.floors, windows: r.windows, walked: `${r.walked}/${r.walks}`, follow: r.follow };
 });
 
-check('a marksman holds a window over the street, and a holdout is found upstairs and walked down', { weight: 2.7 }, async (page) => {
+check('a marksman holds a window over the street, and a holdout is found upstairs and walked down', { weight: 1.7 }, async (page) => {
   // The floors are somewhere to fight from and somewhere to go. A marksman's
   // perch is a roof, a terrace or now a floor's window (`findWindowPerches`
   // in `main.js`: one a building, the window that sees most of the street),
@@ -7303,7 +7303,7 @@ check('sprinting until you are winded does not shake the gun', async (page) => {
   return r;
 });
 
-check('hostiles use the buildings: a frag through the door, posts on the exits, a push on your reload', { weight: 0.1 }, async (page) => {
+check('hostiles use the buildings: a frag through the door, posts on the exits, a push on your reload', { weight: 1.1 }, async (page) => {
   // A building used to be somewhere a hostile walked into after you, or
   // round, and nothing else. Now, with the player in a shop:
   //   - a raider outside, with no shot, lobs a frag that comes to rest in
@@ -7567,7 +7567,7 @@ check('the armoury opens between waves, costs scrip not score, and what it fits 
   return { bought: r.bought, before: r.before, after: r.after };
 });
 
-check('a seed still lays out the city it did', { warm: true, weight: 3.8 }, async (page) => {
+check('a seed still lays out the city it did', { warm: true, weight: 3.6 }, async (page) => {
   // The most expensive lesson in this repo, finally made into a check.
   //
   // Three spends four `Math.random()` calls on a UUID for every object it
@@ -7812,7 +7812,7 @@ check('a seed still lays out the city it did', { warm: true, weight: 3.8 }, asyn
   return got;
 });
 
-check('nothing is built inside out', { weight: 0 }, async (page) => {
+check('nothing is built inside out', { weight: 1 }, async (page) => {
   // A facet whose winding disagrees with its own normal does not error and
   // does not go dark: it vanishes, so it reads as a notch bitten out of the
   // part, somewhere you were not looking. It has been shipped twice — the
@@ -7884,7 +7884,7 @@ check('nothing is built inside out', { weight: 0 }, async (page) => {
   return r;
 });
 
-check('a drop is made the way the thing is, and costs the spawn stream what it did', { weight: 0 }, async (page) => {
+check('a drop is made the way the thing is, and costs the spawn stream what it did', { weight: 1 }, async (page) => {
   // What a hostile leaves behind is the one object the player walks up to and
   // looks down at from a metre away. They were a mustard box, a white box and
   // a canteen-shaped prism; they are an ammunition can, a moulded medical case
@@ -7988,7 +7988,7 @@ check('a drop is made the way the thing is, and costs the spawn stream what it d
   return r;
 });
 
-check('the buildings hold caches: ammunition, a medical case or a plate, and a plate takes a share of a hit', { weight: 0 }, async (page) => {
+check('the buildings hold caches: ammunition, a medical case or a plate, and a plate takes a share of a hit', { weight: 1 }, async (page) => {
   // Loot used to come only off a hostile, so a shop was somewhere to hide and
   // never somewhere to go. Some shops and floors now hold a cache (`loot.js`)
   // against a wall and away from the doors: an ammunition can, a medical case
@@ -8065,7 +8065,7 @@ check('the buildings hold caches: ammunition, a medical case or a plate, and a p
   return r;
 });
 
-check('a hostile faces you, and holds its weapon in both hands', { weight: 0 }, async (page) => {
+check('a hostile faces you, and holds its weapon in both hands', { weight: 1 }, async (page) => {
   // Two things about how a hostile moves, both of which were wrong for as long
   // as hostiles existed and neither of which any check noticed.
   //
@@ -8144,7 +8144,7 @@ check('a hostile faces you, and holds its weapon in both hands', { weight: 0 }, 
   return r;
 });
 
-check('a hostile flinches where it is hit, staggers under a heavy blow, and falls the way it died', { weight: 0 }, async (page) => {
+check('a hostile flinches where it is hit, staggers under a heavy blow, and falls the way it died', { weight: 1 }, async (page) => {
   // A hostile used to take every hit the same way, a nod of the upper body
   // on one spring, and every death the same way too: the knees went and it
   // tipped over the way the round was going, on the spot, gun still in its
@@ -8338,7 +8338,7 @@ check('a hostile flinches where it is hit, staggers under a heavy blow, and fall
   return r;
 });
 
-check('every archetype is kitted, textured, and keeps its hit zones', { weight: 0 }, async (page) => {
+check('every archetype is kitted, textured, and keeps its hit zones', { weight: 1 }, async (page) => {
   // A hostile is read at forty metres against a dusk skyline, where its
   // colour is barely a colour — so the silhouette has to carry the archetype,
   // and the kit that does that is merged into the meshes that are already hit
@@ -8429,7 +8429,7 @@ check('every archetype is kitted, textured, and keeps its hit zones', { weight: 
   return r;
 });
 
-check('a hostile is a body in kit, not a stack of boxes, and costs a spawn what it did', { weight: 0 }, async (page) => {
+check('a hostile is a body in kit, not a stack of boxes, and costs a spawn what it did', { weight: 1 }, async (page) => {
   // Every hostile was chamfered boxes: a brick for a torso, a cube for a
   // head, a box for a fist, boots that were blocks. Under one low sun a box
   // is two lit faces and two dark ones, so half of every body faced
@@ -8532,7 +8532,7 @@ check('a hostile is a body in kit, not a stack of boxes, and costs a spawn what 
   return r;
 });
 
-check('a wave is drawn a part at a time, and looks like the hostiles it is', { weight: 0.3 }, async (page) => {
+check('a wave is drawn a part at a time, and looks like the hostiles it is', { weight: 1.3 }, async (page) => {
   // A hostile was fourteen drawn meshes, nine casting a shadow, so about
   // forty calls a frame across the main pass and both cascades, and a wave
   // was most of the frame's calls (731 against 251 for the empty street,
@@ -8654,7 +8654,7 @@ check('the bake darkens the ground the city stands on', { reads: true }, async (
   return r;
 });
 
-check('look still works when pointer lock is denied', { weight: 0 }, async (page) => {
+check('look still works when pointer lock is denied', { weight: 1 }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     g.startRun();
@@ -8702,7 +8702,7 @@ check('look still works when pointer lock is denied', { weight: 0 }, async (page
   return r;
 });
 
-check('the best-score line sits clear of the deploy button', { weight: 0 }, async (page) => {
+check('the best-score line sits clear of the deploy button', { weight: 1 }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
     g.records = { bestScore: 128450, bestWave: 12 };   // wide enough to wrap if it were going to
@@ -8733,7 +8733,7 @@ check('the best-score line sits clear of the deploy button', { weight: 0 }, asyn
   return r;
 });
 
-check('settings and records survive a reload', async (page) => {
+check('settings and records survive a reload', { weight: 2 }, async (page) => {
   await page.evaluate(() => {
     const g = window.__game;
     g.settings.sens = 175; g.settings.volume = 40; g.settings.invertY = true;
