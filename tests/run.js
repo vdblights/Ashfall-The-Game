@@ -6925,7 +6925,13 @@ check("a ruin's windows are holes: seen and shot through both ways, and its pier
   return r;
 });
 
-check('a juggernaut stoops up a stairwell after you, and a warlord stays down', { weight: 9.3 }, async (page) => {
+// Split in two by stairwell, even and odd, because as one check it was the
+// suite's floor: about 4.5 of CI's 6.5 minutes, more than any shard of
+// everything else. Each stairwell is its own chase (the player is put back
+// and a fresh juggernaut spawned for it), so the halves test what the whole
+// did. The odd half also runs the scavenger and the warlord, which keeps the
+// two about the same weight.
+async function stoopUpStairs(page, half) {
   // A flight's headroom is a lap less the slab, at most the 2.5 m doors, and
   // a juggernaut is 2.57 m of body, so none was ever sent up a stair. It
   // stoops under a ceiling now, so the stair walk asks whether it fits
@@ -6993,7 +6999,7 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
     return w.stairs.length;
   });
   const follow = [];
-  for (let i = 0; i < stairs; i++) {
+  for (let i = half; i < stairs; i += 2) {
     follow.push(await page.evaluate((i) => {
       const g = window.__game, w = g.world, p = g.player, T = window.__stoopUp;
       const s = w.stairs[i];
@@ -7019,9 +7025,14 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
       return { upAt, downAt };
     }, i));
   }
-  const r = await page.evaluate(() => {
+  const r = await page.evaluate((half) => {
     const g = window.__game, w = g.world, p = g.player, T = window.__stoopUp;
     const out = { stairs: w.stairs.length, scavStoop: 0, warlord: null };
+    if (half === 0) {
+      out.relocs = T.relocs;
+      out.peak = +T.peak.toFixed(3); out.stoop = +T.stoop.toFixed(2);
+      return out;
+    }
 
     // a scavenger on the first stair, which has all the headroom it needs
     const s0 = w.stairs[0], exit0 = s0.path[s0.path.length - 1];
@@ -7046,23 +7057,30 @@ check('a juggernaut stoops up a stairwell after you, and a warlord stays down', 
     out.relocs = T.relocs;
     out.peak = +T.peak.toFixed(3); out.stoop = +T.stoop.toFixed(2); out.scavStoop = +out.scavStoop.toFixed(2);
     return out;
-  });
+  }, half);
   r.follow = follow;
   // Measured on seed 1: 13 of 13 stairwells, a juggernaut up in 17-26 s and
   // back down in 13-18 s, stooped by up to 0.47 of its height's units and no
   // point of it through a flight; no relocations; a scavenger not stooped at
   // all; the warlord never set foot on the stair.
+  const mine = r.follow.length;
   const up = r.follow.filter((f) => f.upAt !== null).length, down = r.follow.filter((f) => f.downAt !== null).length;
   expect(r.stairs >= 6, `only ${r.stairs} stairwells on this seed`);
-  expect(up === r.stairs, `a juggernaut followed the player up ${up} of ${r.stairs} stairwells: ${JSON.stringify(r.follow)}`);
-  expect(down === r.stairs, `a juggernaut came back down ${down} of ${r.stairs} stairwells: ${JSON.stringify(r.follow)}`);
+  expect(mine === Math.floor((r.stairs + 1 - half) / 2), `this half walked ${mine} of ${r.stairs} stairwells`);
+  expect(up === mine, `a juggernaut followed the player up ${up} of ${mine} stairwells: ${JSON.stringify(r.follow)}`);
+  expect(down === mine, `a juggernaut came back down ${down} of ${mine} stairwells: ${JSON.stringify(r.follow)}`);
   expect(r.peak <= 0.02, `a juggernaut on a stair stood ${r.peak} m through the flight over it`);
   expect(r.stoop > 0.05, `a juggernaut never stooped on a stair (${r.stoop})`);
   expect(r.relocs === 0, `${r.relocs} relocations on the way`);
-  expect(r.scavStoop < 0.02, `a scavenger stooped ${r.scavStoop} on a stair it fits under standing`);
-  expect(!r.warlord.went && r.warlord.top < 0.6, `a warlord went up a stair it does not fit: ${JSON.stringify(r.warlord)}`);
-  return { stairs: r.stairs, follow: r.follow, peak: r.peak, stoop: r.stoop, scavStoop: r.scavStoop, warlord: r.warlord };
-});
+  if (half === 1) {
+    expect(r.scavStoop < 0.02, `a scavenger stooped ${r.scavStoop} on a stair it fits under standing`);
+    expect(!r.warlord.went && r.warlord.top < 0.6, `a warlord went up a stair it does not fit: ${JSON.stringify(r.warlord)}`);
+    return { stairs: r.stairs, follow: r.follow, peak: r.peak, stoop: r.stoop, scavStoop: r.scavStoop, warlord: r.warlord };
+  }
+  return { stairs: r.stairs, follow: r.follow, peak: r.peak, stoop: r.stoop };
+}
+check('a juggernaut stoops up a stairwell after you (the even stairwells)', { weight: 5.2 }, (page) => stoopUpStairs(page, 0));
+check('a juggernaut stoops up a stairwell after you (the odd stairwells), and a warlord stays down', { weight: 5.2 }, (page) => stoopUpStairs(page, 1));
 
 check('crouch out of a sprint and you slide: low, quick, and stopped by a wall', async (page) => {
   const r = await page.evaluate(() => {

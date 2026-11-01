@@ -366,7 +366,8 @@ These each cost real debugging time. Changing them needs a reason.
   underside 5 cm over the feet, so asked from the feet every hostile
   stooped all the way up every stair, which nothing caught for a whole
   pass because a scavenger stooping is only a pose. `a juggernaut stoops up
-  a stairwell after you, and a warlord stays down` follows the player up
+  a stairwell after you` (two checks, the even stairwells and the odd, the
+  odd one with the warlord) follows the player up
   all 13 of seed 1's stairwells with one (up in 17-26 s, down in 13-18 s,
   no relocations) and reads every point of its body against the flight
   over it: 0 of 13 up with the old gate or the old collision height, 0.265
@@ -3826,7 +3827,11 @@ wherever it ran when measured: the first re-weighing read each check's
 boot as the one measured after it, the last check of each shard had
 none, and one shard drew a dozen of those and took 546 s against 266. To measure again, put back the code in commit
 726baec (each shard prints its checks' seconds as a CI annotation, which
-`gh api .../check-runs/<job>/annotations` reads without the logs). The ash check draws at half the high tier's
+`gh api .../check-runs/<job>/annotations` reads without the logs). The
+stairwell check was then the suite's floor on its own, about 4.5 minutes
+of work with nothing else in its shard, so it runs as two halves, even
+stairwells and odd: each stairwell is its own chase, so the halves test
+what the whole did. The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
