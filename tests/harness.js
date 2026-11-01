@@ -296,13 +296,20 @@ export async function openGame(opts = {}) {
 
   const server = await serve(port);
   const errors = [];
-  let browser, page;
+  let browser, context, page;
+  // One context for every tab, so storage (saved settings, the best score)
+  // carries from tab to tab exactly as it did when there was only ever one.
+  const openTab = async () => {
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    await installHelpers(p);
+    return p;
+  };
   const launch = async () => {
     browser = await launchBrowser({ headed });
-    page = await browser.newPage({ viewport });
-    page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message));
-    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-    await installHelpers(page);
+    context = await browser.newContext({ viewport });
+    page = await openTab();
   };
   await launch();
   const url = `http://localhost:${port}/index.html?seed=${seed}`;
@@ -325,7 +332,22 @@ export async function openGame(opts = {}) {
     // own seed rather than asserting against whatever the suite is pinned to.
     // `warm` boots the way a player's browser does, with the warm-up frame
     // the suite otherwise skips (see `precompileStages`).
-    reload: async ({ freeze: f = freeze, seed: s = seed, warm = false } = {}) => {
+    //
+    // `newTab` boots in a fresh tab and closes the old one without waiting for
+    // it. Navigating away from a booted game makes the browser tear down its
+    // WebGL state, textures and city first, and that took 4-21 s of a reload
+    // on a 2-core machine (6 s in a fresh tab, 42-45 s a boot against 43-60).
+    // The runner asks for it between checks; a check that reloads mid-check
+    // goes on using the `page` it was handed, so it keeps the same tab.
+    reload: async ({ freeze: f = freeze, seed: s = seed, warm = false, newTab = false } = {}) => {
+      if (newTab) {
+        const old = page;
+        page = await openTab();
+        // what the old tab says while it dies is no check's error
+        old.removeAllListeners('pageerror');
+        old.removeAllListeners('console');
+        old.close().catch(() => {});
+      }
       await page.goto(`http://localhost:${port}/index.html?seed=${s}${warm ? '&warm' : ''}`, { waitUntil: 'load' });
       await waitForBoot(page, { freeze: f, seed: s });
     },

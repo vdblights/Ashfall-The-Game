@@ -8821,12 +8821,12 @@ if (ONLY && !selected.length) {
  */
 async function fresh({ warm = false } = {}) {
   try {
-    await game.reload({ warm });
+    await game.reload({ warm, newTab: true });
     return true;
   } catch (err) {
     console.log(`       the page did not come back (${err.message.split('\n')[0]}); relaunching the browser`);
     await game.renew();
-    await game.reload({ warm });
+    await game.reload({ warm, newTab: true });
     return false;
   }
 }
