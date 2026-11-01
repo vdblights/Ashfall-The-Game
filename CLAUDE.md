@@ -3774,7 +3774,7 @@ climb was right. `World.mantleTarget` is unchanged.
 
 CI runs the suite and the one-file build on every push to `main` and every PR
 (`.github/workflows/ci.yml`), and attaches the built `ashfall.html` to the run.
-The suite runs as six parallel shards (`--shard=i/6`, dealt by weight), and
+The suite runs as twelve parallel shards (`--shard=i/12`, dealt by weight), and
 the build only after all of them pass. It was one job with a twenty-minute
 limit until every run from #21 onward was cancelled at exactly twenty
 minutes: every check reboots the game, a boot is most of a check under
@@ -3807,7 +3807,15 @@ in boots, 1 unless said: round-robin had put two of the three slow checks
 on one shard, eight minutes past the rest. Re-weight from the times the
 runner prints when a shard finishes well ahead of the others. After it, on
 CI: five shards ran their checks in 8.1-9.6 minutes and one in 4.8, and
-the whole run took ten minutes against twenty-five. The ash check draws at half the high tier's
+the whole run took ten minutes against twenty-five. Twelve shards
+since (10.5-10.8 boots each by weight; past about sixteen the 9-boot check
+alone sets the floor): checks ran in 3-7 minutes a shard and the whole run
+in 7 min 10 s, against about 13 with six. A public repo's minutes are free,
+so the extra runners cost nothing but their setup. Tried and taken out:
+booting each check in a fresh tab and closing the old one unawaited. On a
+2-core machine navigating away from a booted game spent 4-21 s tearing it
+down, and a fresh tab saved that; on CI's 4-core runners it saved nothing
+(six shards summed 3,718 s against 3,630). Measure a CI speed-up on CI. The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
