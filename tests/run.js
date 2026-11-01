@@ -2062,14 +2062,33 @@ check('a charge on a fuel dump draws them to it, and blows what it reaches', asy
     g.objectives.reset();
     const o2 = arm();
     const kills = g.kills;
+    // The bystander stands where the charge can see its chest, and the player
+    // stands off out of reach of both blasts. Both used to be fixed sides of
+    // the drum: +x for the one, the first of four headings 12 m out for the
+    // other. Once the audio stopped drawing on the seeded stream (see
+    // `audio.init`), this check was dealt a drum against the sector's edge,
+    // where +x was behind cover from the charge (65 -> 34 health, and the
+    // drum's own blast made the kill) and no heading 12 m out was open, so
+    // the player stood 1.3 m from both blasts and died.
     const by = g.spawnEnemy('scavenger');
-    by.pos.set(o2.x + 2.6, W.groundHeight(o2.x + 2.6, o2.z, 0.12, 0.6), o2.z);
+    let bySpot = null;
+    for (let k = 0; k < 16 && !bySpot; k++) {
+      const a = (k / 16) * Math.PI * 2, x = o2.x + Math.cos(a) * 2.6, z = o2.z + Math.sin(a) * 2.6;
+      const y = W.groundHeight(x, z, 0.12, 0.6);
+      if (open(x, z) && W.lineOfSight(o2.x, o2.y + 1.1, o2.z, x, y + 1.15, z)) bySpot = { x, y, z };
+    }
+    if (!bySpot) return { setup: 'no open ground 2.6 m from the charge in sight of it' };
+    by.pos.set(bySpot.x, bySpot.y, bySpot.z);
     by.group.position.copy(by.pos);
     by.update = () => {};
-    for (const a of [0, 1.6, 3.1, 4.7]) {
-      const x = o2.x + Math.cos(a) * 12, z = o2.z + Math.sin(a) * 12;
-      if (open(x, z)) { g.player.reset(x, z); break; }
+    let stood = false;
+    for (const far of [12, 14, 16]) {
+      for (let k = 0; k < 16 && !stood; k++) {
+        const a = (k / 16) * Math.PI * 2, x = o2.x + Math.cos(a) * far, z = o2.z + Math.sin(a) * far;
+        if (open(x, z)) { g.player.reset(x, z); stood = true; }
+      }
     }
+    if (!stood) return { setup: 'no open ground 12-16 m from the charge to stand off on' };
     const feed = [];
     const kill = g.hud.kill.bind(g.hud);
     g.hud.kill = (who, weapon, hs) => { feed.push(weapon); kill(who, weapon, hs); };
@@ -2080,6 +2099,7 @@ check('a charge on a fuel dump draws them to it, and blows what it reaches', asy
       hp: Math.round(g.player.health),
     };
   });
+  expect(!r.setup, `setup: ${r.setup}`);
   expect(r.atDrum, 'the charge is not on a burning drum');
   expect(r.armed, 'planting it did not arm it');
   expect(r.pulled, `a scavenger out of sight of the player came to ${r.closest} m of a live charge and did not pull it`);
@@ -7189,7 +7209,7 @@ check('a lean puts the head round a corner and never through a wall, and the hos
       && (b.sin === 0 || Math.abs(b.cos * (v.x - b.cx) - b.sin * (v.z - b.cz)) < b.hx));
     const open = (x, z) => Math.abs(x) < W.bounds - 2 && Math.abs(z) < W.bounds - 2
       && W.groundHeight(x, z, 0.12, 0.6) < 0.5 && !W.blocked(x, z, 0.5, 0.3);
-    const out = { corners: 0, peeked: 0, hidden: 0, shotLeaning: 0, shotStanding: 0, wall: { tried: 0, through: 0 } };
+    const out = { corners: 0, peeked: 0, hidden: 0, shotLeaning: 0, shotStanding: 0, wall: { tried: 0, through: 0 }, fights: [] };
 
     // A corner of a tall block, from either side of it: standing beside the
     // block's face, just short of its edge and facing the block, the block
@@ -7238,16 +7258,25 @@ check('a lean puts the head round a corner and never through a wall, and the hos
         e.update = (dt, time, pl, w) => { update(dt, time, pl, w); e.pos.set(T.x, T.y - 1.5, T.z); e.group.position.copy(e.pos); };
         e.pos.set(T.x, T.y - 1.5, T.z);
         e.alert(g.time);
-        let hits = 0;
+        // Up to five seconds, done at the first hit. It was a fixed 2.5 s, and
+        // a raider's spread at a head a quarter-metre past a corner is a
+        // matter of the stream: once the audio stopped drawing on it (see
+        // `audio.init`), one corner of two went unhit inside 2.5 s on CI. The
+        // question is whether the head is seen and shot, not how soon.
+        let hits = 0, shots = 0;
+        const shoot = e._shoot.bind(e);
+        e._shoot = (...a) => { shots++; return shoot(...a); };
         const take = g.damagePlayer.bind(g);
         g.damagePlayer = () => { hits++; };
-        frame(150);
+        for (let f = 0; f < 300 && !hits; f++) frame(1);
         g.damagePlayer = take;
         e.alive = false; e.group.visible = false;
-        return hits;
+        return { hits, shots };
       };
-      if (fight(true) > 0) out.shotLeaning++;
-      if (fight(false) > 0) out.shotStanding++;
+      const leaning = fight(true), standing = fight(false);
+      out.fights.push({ leaning, standing });
+      if (leaning.hits > 0) out.shotLeaning++;
+      if (standing.hits > 0) out.shotStanding++;
       K.clear(); frame(20);
     }
 
@@ -7286,7 +7315,7 @@ check('a lean puts the head round a corner and never through a wall, and the hos
   });
   expect(r.corners >= 2, `only ${r.corners} corners to lean round`);
   expect(r.peeked === r.corners && r.hidden === r.corners, `leaning round ${r.corners} corners: head out at ${r.peeked}, body hidden at ${r.hidden}`);
-  expect(r.shotLeaning === r.corners, `a raider round the corner shot ${r.shotLeaning} of ${r.corners} leaning heads`);
+  expect(r.shotLeaning === r.corners, `a raider round the corner shot ${r.shotLeaning} of ${r.corners} leaning heads: ${JSON.stringify(r.fights)}`);
   expect(r.shotStanding === 0, `a raider round the corner shot ${r.shotStanding} players it could not see`);
   expect(r.wall.tried >= 3 && r.wall.through === 0, `${r.wall.through} of ${r.wall.tried} leans into a wall put the head in it`);
   expect(r.tap && r.hold && r.held < -0.9, `a tap of Q cycled ${r.tap}, a hold leaned ${r.held} and left the weapon ${r.hold}`);
