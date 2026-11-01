@@ -8820,12 +8820,7 @@ if (ONLY && !selected.length) {
  * used to take the whole run down with it: the reload threw outside any
  * check, the runner died on it, and every check still to come went unrun.
  */
-let bootMs = 0; // TEMP timing
 async function fresh({ warm = false } = {}) {
-  const t0 = Date.now();
-  try { return await freshInner({ warm }); } finally { bootMs += Date.now() - t0; }
-}
-async function freshInner({ warm = false } = {}) {
   try {
     await game.reload({ warm });
     return true;
@@ -8886,10 +8881,8 @@ async function attempt(fn) {
 // checked for having changed nothing itself.
 // openGame has just booted one, and nothing has touched it
 let loaded = { warm: false, at: null };   // the untouched boot on the page, or null
-const timing = []; // TEMP timing
 for (const [i, { name, fn, reads, warm }] of selected.entries()) {
   const began = Date.now();
-  const boot0 = bootMs;
   if (!loaded || loaded.warm !== warm) { await fresh({ warm }); loaded = { warm, at: null }; }
   if (reads && !loaded.at) loaded.at = await digest(game.page);
   let out = await attempt(fn);
@@ -8914,7 +8907,6 @@ for (const [i, { name, fn, reads, warm }] of selected.entries()) {
     }
     loaded = { warm: nextWarm, at: null };
   }
-  timing.push([name, reads ? 1 : 0, Math.round((Date.now() - began - (bootMs - boot0)) / 100) / 10, Math.round((bootMs - boot0) / 100) / 10]);
   const took = `${((Date.now() - began) / 1000).toFixed(0)}s`.padStart(4);
   if (out.ok) {
     console.log(`  ok   ${took} ${name}${out.detail ? '  ' + JSON.stringify(out.detail).slice(0, 120) : ''}`);
@@ -8931,7 +8923,6 @@ if (SHOTS) {
   await screenshots(game.page);
 }
 
-if (process.env.GITHUB_ACTIONS) console.log(`::notice title=timing ${SHARD.join('/')}::${JSON.stringify(timing)}`); // TEMP timing
 await game.close();
 
 console.log(`\n${selected.length - failed}/${selected.length} checks passed`);
