@@ -8913,6 +8913,34 @@ let baseline = null;       // the fresh boot's digest
 let onReused = false;      // whether the check about to run got a reused boot
 const report = [];         // [name, ok, onReused, detail] for comparing runs
 
+
+// EXPERIMENT: a deep snapshot of the game's own state, to name what a reset
+// misses. Primitives reachable from the game a few levels down, by path;
+// three's objects, typed arrays and DOM nodes are summarised, not walked.
+const DEEP = process.env.ASHFALL_DEEPDIFF === '1';
+const deepSnap = (page) => page.evaluate(() => {
+  const out = {}, seen = new WeakSet();
+  const skip = new Set(['scene', 'viewScene', 'renderer', 'loading', 'parent', 'children', 'geometry', 'material', 'matrixWorld', 'matrix']);
+  const walk = (o, path, depth) => {
+    if (o === null || o === undefined) { out[path] = String(o); return; }
+    const t = typeof o;
+    if (t === 'number') { out[path] = Math.round(o * 1e4) / 1e4; return; }
+    if (t === 'string' || t === 'boolean') { out[path] = o; return; }
+    if (t === 'function') { out[path] = 'fn:' + (Object.prototype.hasOwnProperty.call(o, 'prototype') ? 'p' : '') + (o.name || '?'); return; }
+    if (t !== 'object') return;
+    if (seen.has(o)) return; seen.add(o);
+    if (ArrayBuffer.isView(o)) { out[path] = 'typed:' + o.length; return; }
+    if (o instanceof Node) return;
+    if (o.isObject3D) { out[path] = 'obj3d:' + (o.visible ? 1 : 0) + ':' + o.children.length + ':' + o.position.toArray().map((v) => v.toFixed(2)).join(','); return; }
+    if (o instanceof Map || o instanceof Set) { out[path + '.size'] = o.size; if (depth <= 0) return; let i = 0; for (const v of o.values()) { if (i > 40) break; walk(v, path + '[' + (i++) + ']', depth - 1); } return; }
+    if (depth <= 0) { out[path] = 'obj'; return; }
+    if (Array.isArray(o)) { out[path + '.length'] = o.length; for (let i = 0; i < Math.min(o.length, 60); i++) walk(o[i], path + '[' + i + ']', depth - 1); return; }
+    for (const k of Object.keys(o)) { if (skip.has(k)) continue; walk(o[k], path + '.' + k, depth - 1); }
+  };
+  walk(window.__game, 'g', 5);
+  return out;
+});
+let deepBase = null;
 async function capture() {
   await game.page.evaluate(() => {
     const g = window.__game;
@@ -8932,6 +8960,7 @@ async function capture() {
     };
   });
   baseline = await digest(game.page);
+  if (DEEP) deepBase = await deepSnap(game.page);
 }
 
 async function reuse() {
@@ -8968,6 +8997,13 @@ async function reuse() {
     g.reseed(g.seed);
   });
   const now = await digest(game.page);
+  if (DEEP && deepBase) {
+    const d = await deepSnap(game.page);
+    const keys = new Set([...Object.keys(deepBase), ...Object.keys(d)]);
+    const diffs = [...keys].filter((k) => JSON.stringify(deepBase[k]) !== JSON.stringify(d[k]));
+    console.log(`       deep diff after reset: ${diffs.length} paths`);
+    for (const k of diffs.slice(0, 5000)) console.log(`         ${k}: ${JSON.stringify(deepBase[k])} -> ${JSON.stringify(d[k])}`);
+  }
   if (now === baseline) { reuseStats.reused++; return true; }
   // name what differed, by position in the digest, for the report
   const a = JSON.parse(baseline), b = JSON.parse(now);
