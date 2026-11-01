@@ -3831,7 +3831,12 @@ none, and one shard drew a dozen of those and took 546 s against 266. To measure
 stairwell check was then the suite's floor on its own, about 4.5 minutes
 of work with nothing else in its shard, so it runs as two halves, even
 stairwells and odd: each stairwell is its own chase, so the halves test
-what the whole did. The ash check draws at half the high tier's
+what the whole did. Split, the halves took 97 s and 113 s,
+nothing in the suite took over about two minutes, and the run was bound
+by boots (6-7 a shard, 17-90 s each depending on the runner), so it went
+to sixteen shards: 175-284 s of checks a shard and 5 min 39 s a run,
+against 6.5-7.8 minutes over twelve. Weights are each check's own work
+averaged over two timed runs, plus a 32 s boot. The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
