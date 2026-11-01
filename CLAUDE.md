@@ -3815,7 +3815,16 @@ so the extra runners cost nothing but their setup. Tried and taken out:
 booting each check in a fresh tab and closing the old one unawaited. On a
 2-core machine navigating away from a booted game spent 4-21 s tearing it
 down, and a fresh tab saved that; on CI's 4-core runners it saved nothing
-(six shards summed 3,718 s against 3,630). Measure a CI speed-up on CI. The ash check draws at half the high tier's
+(six shards summed 3,718 s against 3,630). Measure a CI speed-up on CI. **Booting is 69% of
+CI's time** (measured 2026-11-01, one run of all twelve shards): a boot
+there is 32 s (median of 69), the checks' own work 1,013 s in all against
+2,304 s of boots, and 58 of the 81 checks that need a fresh boot finish
+their own work in under 5 s. The weights were re-measured from that run,
+each the check plus the boot after it over 32 s: shards 240-298 s of
+checks against 213-351 with the 20 s weights, the floor being the
+stairwell check alone. To measure again, put back the code in commit
+726baec (each shard prints its checks' seconds as a CI annotation, which
+`gh api .../check-runs/<job>/annotations` reads without the logs). The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
