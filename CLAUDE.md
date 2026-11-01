@@ -1043,7 +1043,16 @@ These each cost real debugging time. Changing them needs a reason.
 - **`Math.random` is seeded and the stream order matters.** Do not spend it on
   cosmetics, per-frame or per-surface — an earlier fire flicker did, and
   identical runs diverged. Deterministic noise instead (`flickerFires`), or a
-  hash of the position (`tintAt`, `wallUV`).
+  hash of the position (`tintAt`, `wallUV`). **Sound is a cosmetic too.** `audio.init` runs on the first
+  `startRun` and filled 3.5 s of noise and reverb from `Math.random`, so a
+  page's first run was dealt every spawn and objective site from a different
+  stream than any run after it (the mark after the first `startRun` was
+  191956325; after any later one, the mark it started at), and by how many
+  samples the machine's audio rate asked for. It draws on a generator of its
+  own now. Found because a test runner that reset the game between checks
+  instead of rebooting it got different results on every reused boot. Two
+  checks had only passed on that stream, and each was set up to ask its
+  question on any drum and any corner.
 - **So does three's, and it spends four numbers per object.** Every material,
   texture, geometry and `Object3D` gets a UUID at construction, and
   `generateUUID` draws four `Math.random()` calls to build it. One material

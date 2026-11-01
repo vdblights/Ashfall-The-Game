@@ -14,6 +14,7 @@
  * head, unpanned. A hostile's steps are not yours, and are placed like its
  * shots (`footfall`).
  */
+import { makeRandom } from './rng.js';
 class Audio {
   constructor() {
     this.ctx = null;
@@ -35,8 +36,13 @@ class Audio {
     this.master.gain.value = 0.5;
 
     // a touch of room: the city is all concrete
+    // The noise is drawn from a generator of its own, never `Math.random`:
+    // this runs on the first `startRun`, and the seeded stream drawn here
+    // (a sample a frame of 3.5 s of sound, more at 48 kHz than 44.1) moved
+    // every spawn of a page's first run and of no run after it.
+    const rand = makeRandom(0xa0d10);
     const conv = this.ctx.createConvolver();
-    conv.buffer = this._impulse(1.5, 2.6);
+    conv.buffer = this._impulse(1.5, 2.6, rand);
     const wet = this.ctx.createGain();
     wet.gain.value = 0.22;
     this.master.connect(this.ctx.destination);
@@ -47,18 +53,18 @@ class Audio {
     const len = this.ctx.sampleRate * 2;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) data[i] = rand() * 2 - 1;
     this.noiseBuf = buf;
   }
 
-  _impulse(seconds, decay) {
+  _impulse(seconds, decay, rand) {
     const rate = this.ctx.sampleRate;
     const len = (rate * seconds) | 0;
     const buf = this.ctx.createBuffer(2, len, rate);
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch);
       for (let i = 0; i < len; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+        d[i] = (rand() * 2 - 1) * Math.pow(1 - i / len, decay);
       }
     }
     return buf;
