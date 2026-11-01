@@ -11,7 +11,7 @@ Read `README.md` first for what the game *is*. This file is for changing it.
 ```bash
 npm start                      # serve at http://localhost:8000 (no deps needed)
 npm test                       # the headless suite (needs npm install first)
-npm test -- --shard=2/6        # the second of six weighted slices, as CI runs it
+npm test -- --shard=2/12       # the second of twelve weighted slices, as CI runs it
 npm test -- --only=auto        # just the checks whose name contains "auto"
 npm test -- --only="a|b"       # either, in suite order, in one browser
 npm run build                  # one-file dist/ashfall.html, no external refs
