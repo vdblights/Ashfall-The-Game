@@ -3820,9 +3820,11 @@ CI's time** (measured 2026-11-01, one run of all twelve shards): a boot
 there is 32 s (median of 69), the checks' own work 1,013 s in all against
 2,304 s of boots, and 58 of the 81 checks that need a fresh boot finish
 their own work in under 5 s. The weights were re-measured from that run,
-each the check plus the boot after it over 32 s: shards 240-298 s of
-checks against 213-351 with the 20 s weights, the floor being the
-stairwell check alone. To measure again, put back the code in commit
+each a check's own work plus one boot (32 s), over 32 s: 289-313 s of
+checks a shard. Charge every check that does not only read a whole boot,
+wherever it ran when measured: the first re-weighing read each check's
+boot as the one measured after it, the last check of each shard had
+none, and one shard drew a dozen of those and took 546 s against 266. To measure again, put back the code in commit
 726baec (each shard prints its checks' seconds as a CI annotation, which
 `gh api .../check-runs/<job>/annotations` reads without the logs). The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
