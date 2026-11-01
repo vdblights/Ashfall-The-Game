@@ -11,7 +11,7 @@ Read `README.md` first for what the game *is*. This file is for changing it.
 ```bash
 npm start                      # serve at http://localhost:8000 (no deps needed)
 npm test                       # the headless suite (needs npm install first)
-npm test -- --shard=2/12       # the second of twelve weighted slices, as CI runs it
+npm test -- --shard=2/16       # the second of sixteen weighted slices, as CI runs it
 npm test -- --only=auto        # just the checks whose name contains "auto"
 npm test -- --only="a|b"       # either, in suite order, in one browser
 npm run build                  # one-file dist/ashfall.html, no external refs
@@ -3775,7 +3775,7 @@ climb was right. `World.mantleTarget` is unchanged.
 
 CI runs the suite and the one-file build on every push to `main` and every PR
 (`.github/workflows/ci.yml`), and attaches the built `ashfall.html` to the run.
-The suite runs as twelve parallel shards (`--shard=i/12`, dealt by weight), and
+The suite runs as sixteen parallel shards (`--shard=i/16`, dealt by weight), and
 the build only after all of them pass. It was one job with a twenty-minute
 limit until every run from #21 onward was cancelled at exactly twenty
 minutes: every check reboots the game, a boot is most of a check under

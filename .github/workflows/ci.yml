@@ -17,19 +17,20 @@ concurrency:
 jobs:
   # Every check boots the game afresh, and under software rendering a boot is
   # most of a check, so one job running all of them outgrew its time limit
-  # (twenty minutes, every run cancelled). Twelve shards, dealt by `--shard` so
+  # (twenty minutes, every run cancelled). Sixteen shards, dealt by `--shard` so
   # each carries about the same weight of checks (see the runner in run.js).
   # Six took ~10 minutes a shard; a shard's fixed cost (setup and its first
-  # boot) is under a minute of that, so doubling them roughly halves the wait,
-  # and a public repo's minutes are free.
+  # boot) is under a minute of that, and a public repo's minutes are free.
+  # Sixteen keeps the run inside the account's 20 concurrent jobs with the
+  # devlog job alongside. See CLAUDE.md (State) for what each step measured.
   test:
-    name: checks ${{ matrix.shard }}/12
+    name: checks ${{ matrix.shard }}/16
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
     steps:
       - uses: actions/checkout@v7
@@ -63,7 +64,7 @@ jobs:
 
       # The runner has no GPU; the harness already asks for SwiftShader.
       - name: Run checks
-        run: npm test -- --shard=${{ matrix.shard }}/12
+        run: npm test -- --shard=${{ matrix.shard }}/16
 
   # The devlog workflow's own checks: no browser, nothing sent anywhere.
   devlog:
