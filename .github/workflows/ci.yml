@@ -8,10 +8,14 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      reuse:
+        description: EXPERIMENT - reset and verify instead of rebooting (1) or not (0)
+        default: '0'
 
 # A second push to the same branch makes the first run's answer irrelevant.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ inputs.reuse }}-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -65,6 +69,9 @@ jobs:
       # The runner has no GPU; the harness already asks for SwiftShader.
       - name: Run checks
         run: npm test -- --shard=${{ matrix.shard }}/16
+        env:
+          ASHFALL_REPORT: '1'
+          ASHFALL_REUSE: ${{ inputs.reuse || '0' }}
 
   # The devlog workflow's own checks: no browser, nothing sent anywhere.
   devlog:

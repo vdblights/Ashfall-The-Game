@@ -8893,6 +8893,91 @@ async function attempt(fn) {
   }
 }
 
+/*
+ * EXPERIMENT (ASHFALL_REUSE=1): reset and verify instead of rebooting.
+ *
+ * After a check that changed the game, put it back the way a fresh boot
+ * left it and reuse the page if `digest` then matches the fresh boot's;
+ * otherwise reboot as usual. What a check can leave behind, from reading
+ * the suite: functions it swapped on the game and its systems (startWave,
+ * render, relocateEnemy and a dozen more), hostiles in play and in the
+ * pool (a pooled spawn mints nothing, a fresh one spends 100 draws of the
+ * stream, so a pool alone would move every later spawn), the state and the
+ * menu, the clock, the camera and the player, the tier and resolution, and
+ * the seeded stream. Programs compiled are not undone: `digest` counts
+ * them, so a check that compiled more forces a reboot.
+ */
+const REUSE = process.env.ASHFALL_REUSE === '1';
+const reuseStats = { reused: 0, refused: 0, why: {} };
+let baseline = null;       // the fresh boot's digest
+let onReused = false;      // whether the check about to run got a reused boot
+const report = [];         // [name, ok, onReused, detail] for comparing runs
+
+async function capture() {
+  await game.page.evaluate(() => {
+    const g = window.__game;
+    const systems = () => ({ g, world: g.world, player: g.player, weapons: g.weapons, hud: g.hud,
+      clock: g.clock, objectives: g.objectives, grenades: g.grenades, barrels: g.barrels,
+      glass: g.glass, effects: g.effects, renderer: g.renderer, input: g.input, post: g.post });
+    const fns = {};
+    for (const [k, o] of Object.entries(systems())) {
+      if (o) fns[k] = new Map(Object.keys(o).filter((n) => typeof o[n] === 'function').map((n) => [n, o[n]]));
+    }
+    const p = g.player;
+    window.__baseline = {
+      systems, fns, time: g.time, tier: g.activeTier, scale: g.renderScale, ratio: g.renderer.getPixelRatio(),
+      cam: [g.camera.position.clone(), g.camera.quaternion.clone()],
+      player: p && { pos: p.position.clone(), feetY: p.feetY, yaw: p.yaw, pitch: p.pitch },
+      score: g.score, children: [...g.scene.children],
+    };
+  });
+  baseline = await digest(game.page);
+}
+
+async function reuse() {
+  // a check that reloaded mid-check took the baseline with the old page
+  const had = await game.page.evaluate(() => !!window.__baseline);
+  if (!had) { reuseStats.refused++; reuseStats.why.reloaded = (reuseStats.why.reloaded || 0) + 1; return false; }
+  await game.page.evaluate(() => {
+    const g = window.__game, B = window.__baseline;
+    // 1. functions a check swapped, added or deleted, on every system
+    for (const [k, o] of Object.entries(B.systems())) {
+      const was = B.fns[k];
+      if (!o || !was) continue;
+      for (const n of Object.keys(o)) if (typeof o[n] === 'function' && !was.has(n)) delete o[n];
+      for (const [n, f] of was) if (o[n] !== f) o[n] = f;
+    }
+    // 2. every hostile, in play or pooled, gone as if never spawned
+    const all = [...g.enemies, ...Object.values(g.pool).flat()];
+    for (const e of new Set(all)) { e.group.visible = false; g.hostiles?.untrack(e.group); e.dispose(g.scene); }
+    g.enemies.length = 0; g.pool = {}; g.boss = null;
+    // what a run put in the scene (caches, pickups, effects) out again, and
+    // anything taken out put back, in the boot's order
+    g.scene.remove(...g.scene.children);
+    g.scene.add(...B.children);
+    // 3. back to the menu, the clock, the camera, the player, the tier
+    g.toMenu();
+    g.renderer.setAnimationLoop(null);
+    if (g.activeTier !== B.tier) g.applyQuality(B.tier);
+    g.renderScale = B.scale; g.renderer.setPixelRatio(B.ratio);
+    g.time = B.time; g.score = B.score;
+    g.camera.position.copy(B.cam[0]); g.camera.quaternion.copy(B.cam[1]);
+    const p = g.player;
+    if (p && B.player) { p.position.copy(B.player.pos); p.feetY = B.player.feetY; p.yaw = B.player.yaw; p.pitch = B.player.pitch; }
+    // 4. the seeded stream, as waitForBoot leaves it
+    g.reseed(g.seed);
+  });
+  const now = await digest(game.page);
+  if (now === baseline) { reuseStats.reused++; return true; }
+  // name what differed, by position in the digest, for the report
+  const a = JSON.parse(baseline), b = JSON.parse(now);
+  const diff = a.map((v, i) => (v !== b[i] ? i : -1)).filter((i) => i >= 0).join(',');
+  reuseStats.refused++; reuseStats.why[diff] = (reuseStats.why[diff] || 0) + 1;
+  return false;
+}
+
+if (REUSE) await capture();   // openGame's boot, untouched
+
 // Every check gets a freshly booted game on the same seed: sharing one made
 // results depend on what the previous check left behind. The exception is a
 // check marked `reads`, which may take a boot that nothing has changed, and is
@@ -8901,7 +8986,7 @@ async function attempt(fn) {
 let loaded = { warm: false, at: null };   // the untouched boot on the page, or null
 for (const [i, { name, fn, reads, warm }] of selected.entries()) {
   const began = Date.now();
-  if (!loaded || loaded.warm !== warm) { await fresh({ warm }); loaded = { warm, at: null }; }
+  if (!loaded || loaded.warm !== warm) { await fresh({ warm }); loaded = { warm, at: null }; onReused = false; if (REUSE && !warm) await capture(); }
   if (reads && !loaded.at) loaded.at = await digest(game.page);
   let out = await attempt(fn);
   if (out.ok && reads) {
@@ -8912,7 +8997,12 @@ for (const [i, { name, fn, reads, warm }] of selected.entries()) {
   // other check, or one that failed, leaves a page to reload. After the last
   // there is nothing to load unless it failed.
   const next = selected[i + 1], nextWarm = !!next?.warm;
+  const ranReused = onReused;
   if (!(out.ok && reads) && !(out.ok && !next)) {
+    if (REUSE && out.ok && !warm && !nextWarm && await reuse()) {
+      onReused = true; loaded = { warm: false, at: null };
+    } else {
+    onReused = false;
     const healthy = await fresh({ warm: nextWarm });
     // A check that fails and leaves the browser wedged behind it failed
     // because of the browser: it gets one more run, on a new one. A failure
@@ -8924,7 +9014,10 @@ for (const [i, { name, fn, reads, warm }] of selected.entries()) {
       await fresh({ warm: nextWarm });
     }
     loaded = { warm: nextWarm, at: null };
+    if (REUSE && !nextWarm) await capture();
+    }
   }
+  report.push([name, out.ok, ranReused, out.ok ? out.detail ?? null : String(out.err?.message).slice(0, 300)]);
   const took = `${((Date.now() - began) / 1000).toFixed(0)}s`.padStart(4);
   if (out.ok) {
     console.log(`  ok   ${took} ${name}${out.detail ? '  ' + JSON.stringify(out.detail).slice(0, 120) : ''}`);
@@ -8941,6 +9034,11 @@ if (SHOTS) {
   await screenshots(game.page);
 }
 
+if (process.env.GITHUB_ACTIONS && process.env.ASHFALL_REPORT) {
+  const shard = SHARD.join('/');
+  console.log(`::notice title=report ${shard}::${JSON.stringify({ reuse: REUSE, stats: reuseStats, report: report.map(([n, ok, r, d]) => [n, ok, r, JSON.stringify(d)?.slice(0, 1500)]) })}`);
+}
+if (REUSE) console.log(`\nreuse: ${reuseStats.reused} boots reused, ${reuseStats.refused} refused ${JSON.stringify(reuseStats.why)}`);
 await game.close();
 
 console.log(`\n${selected.length - failed}/${selected.length} checks passed`);
