@@ -11,7 +11,7 @@ Read `README.md` first for what the game *is*. This file is for changing it.
 ```bash
 npm start                      # serve at http://localhost:8000 (no deps needed)
 npm test                       # the headless suite (needs npm install first)
-npm test -- --shard=2/6        # the second of six weighted slices, as CI runs it
+npm test -- --shard=2/16       # the second of sixteen weighted slices, as CI runs it
 npm test -- --only=auto        # just the checks whose name contains "auto"
 npm test -- --only="a|b"       # either, in suite order, in one browser
 npm run build                  # one-file dist/ashfall.html, no external refs
@@ -366,7 +366,8 @@ These each cost real debugging time. Changing them needs a reason.
   underside 5 cm over the feet, so asked from the feet every hostile
   stooped all the way up every stair, which nothing caught for a whole
   pass because a scavenger stooping is only a pose. `a juggernaut stoops up
-  a stairwell after you, and a warlord stays down` follows the player up
+  a stairwell after you` (two checks, the even stairwells and the odd, the
+  odd one with the warlord) follows the player up
   all 13 of seed 1's stairwells with one (up in 17-26 s, down in 13-18 s,
   no relocations) and reads every point of its body against the flight
   over it: 0 of 13 up with the old gate or the old collision height, 0.265
@@ -3774,7 +3775,7 @@ climb was right. `World.mantleTarget` is unchanged.
 
 CI runs the suite and the one-file build on every push to `main` and every PR
 (`.github/workflows/ci.yml`), and attaches the built `ashfall.html` to the run.
-The suite runs as six parallel shards (`--shard=i/6`, dealt by weight), and
+The suite runs as sixteen parallel shards (`--shard=i/16`, dealt by weight), and
 the build only after all of them pass. It was one job with a twenty-minute
 limit until every run from #21 onward was cancelled at exactly twenty
 minutes: every check reboots the game, a boot is most of a check under
@@ -3807,7 +3808,35 @@ in boots, 1 unless said: round-robin had put two of the three slow checks
 on one shard, eight minutes past the rest. Re-weight from the times the
 runner prints when a shard finishes well ahead of the others. After it, on
 CI: five shards ran their checks in 8.1-9.6 minutes and one in 4.8, and
-the whole run took ten minutes against twenty-five. The ash check draws at half the high tier's
+the whole run took ten minutes against twenty-five. Twelve shards
+since (10.5-10.8 boots each by weight; past about sixteen the 9-boot check
+alone sets the floor): checks ran in 3-7 minutes a shard and the whole run
+in 7 min 10 s, against about 13 with six. A public repo's minutes are free,
+so the extra runners cost nothing but their setup. Tried and taken out:
+booting each check in a fresh tab and closing the old one unawaited. On a
+2-core machine navigating away from a booted game spent 4-21 s tearing it
+down, and a fresh tab saved that; on CI's 4-core runners it saved nothing
+(six shards summed 3,718 s against 3,630). Measure a CI speed-up on CI. **Booting is 69% of
+CI's time** (measured 2026-11-01, one run of all twelve shards): a boot
+there is 32 s (median of 69), the checks' own work 1,013 s in all against
+2,304 s of boots, and 58 of the 81 checks that need a fresh boot finish
+their own work in under 5 s. The weights were re-measured from that run,
+each a check's own work plus one boot (32 s), over 32 s: 289-313 s of
+checks a shard. Charge every check that does not only read a whole boot,
+wherever it ran when measured: the first re-weighing read each check's
+boot as the one measured after it, the last check of each shard had
+none, and one shard drew a dozen of those and took 546 s against 266. To measure again, put back the code in commit
+726baec (each shard prints its checks' seconds as a CI annotation, which
+`gh api .../check-runs/<job>/annotations` reads without the logs). The
+stairwell check was then the suite's floor on its own, about 4.5 minutes
+of work with nothing else in its shard, so it runs as two halves, even
+stairwells and odd: each stairwell is its own chase, so the halves test
+what the whole did. Split, the halves took 97 s and 113 s,
+nothing in the suite took over about two minutes, and the run was bound
+by boots (6-7 a shard, 17-90 s each depending on the runner), so it went
+to sixteen shards: 175-284 s of checks a shard and 5 min 39 s a run,
+against 6.5-7.8 minutes over twelve. Weights are each check's own work
+averaged over two timed runs, plus a 32 s boot. The ash check draws at half the high tier's
 resolution, which a share of the frame does not notice (0.229% open, 0.015%
 indoors, as at full) and which took it from 276 s to 96 s.
 Chromium is cached on the resolved Playwright version, so a run is a couple of
