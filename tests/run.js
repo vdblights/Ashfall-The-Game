@@ -143,7 +143,7 @@ check('every city material survives the bake', { reads: true }, async (page) => 
   return r;
 });
 
-check('the near shadow cascade draws the street it covers, not the city', { weight: 1.2 }, async (page) => {
+check('the near shadow cascade draws the street it covers, not the city', { weight: 1.1 }, async (page) => {
   // The bake used to merge the city into one mesh per material, each one
   // spanning the sector, so nothing in it could be culled: the near cascade
   // is 26 m across and drew every triangle of the city into its map, and the
@@ -2377,7 +2377,7 @@ check('a scripted run reaches wave 3 without stalling', { weight: 1.4 }, async (
   return r;
 });
 
-check('a wave never deadlocks on a hostile that cannot path to you', { weight: 2.2 }, async (page) => {
+check('a wave never deadlocks on a hostile that cannot path to you', { weight: 2.3 }, async (page) => {
   // A hostile steers straight at the player and has no pathfinding, so with a
   // building in the way it slides along the wall face. Every per-window
   // measure the stuck watchdog had excused that — it covers ground, and the
@@ -2692,7 +2692,7 @@ check('ambient occlusion darkens where things meet and leaves open ground alone'
   return r;
 });
 
-check('the sun reads a sharp shadow map near you, and it agrees with the wide one', { weight: 1.8 }, async (page) => {
+check('the sun reads a sharp shadow map near you, and it agrees with the wide one', { weight: 1.7 }, async (page) => {
   // The cascade is a rewrite of three's light loop that assumes the sun is
   // the first shadow-casting directional light and the cascade the second.
   // Nothing errors when that stops being true: the sun reads the wrong map,
@@ -4599,7 +4599,7 @@ const CITY_FINGERPRINT = () => {
   };
 };
 
-check('nothing compiles at first contact', { warm: true, weight: 2.4 }, async (page) => {
+check('nothing compiles at first contact', { warm: true, weight: 2.5 }, async (page) => {
   // `renderer.compile` at boot compiled what was visible, which was the city.
   // Every hostile, every pooled tracer, casing and sprite, and the muzzle
   // flash — built lazily on the first shot — compiled on the first frame it
@@ -5127,7 +5127,7 @@ check('a shot from your right is heard on your right', async (page) => {
   return r;
 });
 
-check('a hostile is heard walking, where it walks, and only while it walks', async (page) => {
+check('a hostile is heard walking, where it walks, and only while it walks', { weight: 2 }, async (page) => {
   // A flanker was silent until it fired. Its steps come off the same stride
   // its legs are drawn from — two a stride — and are placed at its feet. This
   // walks a raider on the spot at the player's left, then stands it still,
@@ -5282,7 +5282,7 @@ check('the sky has weather in it', async (page) => {
   return r;
 });
 
-check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', { weight: 5 }, async (page) => {
+check('ash falls in the open and not under a roof, smoke stands over the city, and sparks over a fire', { weight: 4.6 }, async (page) => {
   // The ash (`ash.js`) is a few thousand points placed by their shader off
   // game time and a seed each, and it is kept out from under anything that
   // stands over a body by a height map baked from the box list. That map is
@@ -5407,7 +5407,7 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
   return r;
 });
 
-check('the air carries the light: shafts from the sun, ash on what faces up, heat over a fire', { weight: 2.7 }, async (page) => {
+check('the air carries the light: shafts from the sun, ash on what faces up, heat over a fire', { weight: 2.6 }, async (page) => {
   // Three things in the air, each a pass that is easy to get quietly wrong.
   // Light shafts are blurred out of the sky round the sun and added in the
   // composite: they must be there looking toward the sun, nothing looking
@@ -6414,7 +6414,7 @@ check('on a roof, two hostiles cover the stair door and are waiting when you com
   return r;
 });
 
-check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', { weight: 1.2 }, async (page) => {
+check('a building with a stairwell has floors: walked onto from the stair, seen and shot out of, and followed onto', { weight: 1.3 }, async (page) => {
   // Every lap of a stairwell lands at a floor of its building (`upperFloors`
   // in `city.js`): a slab you stand on, a ceiling, and walls of piers, sills
   // and lintels with the windows left open. This climbs every stairwell and
@@ -7079,8 +7079,8 @@ async function stoopUpStairs(page, half) {
   }
   return { stairs: r.stairs, follow: r.follow, peak: r.peak, stoop: r.stoop };
 }
-check('a juggernaut stoops up a stairwell after you (the even stairwells)', { weight: 5.2 }, (page) => stoopUpStairs(page, 0));
-check('a juggernaut stoops up a stairwell after you (the odd stairwells), and a warlord stays down', { weight: 5.2 }, (page) => stoopUpStairs(page, 1));
+check('a juggernaut stoops up a stairwell after you (the even stairwells)', { weight: 4 }, (page) => stoopUpStairs(page, 0));
+check('a juggernaut stoops up a stairwell after you (the odd stairwells), and a warlord stays down', { weight: 4.5 }, (page) => stoopUpStairs(page, 1));
 
 check('crouch out of a sprint and you slide: low, quick, and stopped by a wall', async (page) => {
   const r = await page.evaluate(() => {
@@ -8550,7 +8550,7 @@ check('a hostile is a body in kit, not a stack of boxes, and costs a spawn what 
   return r;
 });
 
-check('a wave is drawn a part at a time, and looks like the hostiles it is', { weight: 1.3 }, async (page) => {
+check('a wave is drawn a part at a time, and looks like the hostiles it is', { weight: 1.2 }, async (page) => {
   // A hostile was fourteen drawn meshes, nine casting a shadow, so about
   // forty calls a frame across the main pass and both cascades, and a wave
   // was most of the frame's calls (731 against 251 for the empty street,
@@ -8838,12 +8838,7 @@ if (ONLY && !selected.length) {
  * used to take the whole run down with it: the reload threw outside any
  * check, the runner died on it, and every check still to come went unrun.
  */
-let bootMs = 0; // TEMP timing
 async function fresh({ warm = false } = {}) {
-  const t0 = Date.now();
-  try { return await freshInner({ warm }); } finally { bootMs += Date.now() - t0; }
-}
-async function freshInner({ warm = false } = {}) {
   try {
     await game.reload({ warm });
     return true;
@@ -8904,10 +8899,8 @@ async function attempt(fn) {
 // checked for having changed nothing itself.
 // openGame has just booted one, and nothing has touched it
 let loaded = { warm: false, at: null };   // the untouched boot on the page, or null
-const timing = []; // TEMP timing
 for (const [i, { name, fn, reads, warm }] of selected.entries()) {
   const began = Date.now();
-  const boot0 = bootMs;
   if (!loaded || loaded.warm !== warm) { await fresh({ warm }); loaded = { warm, at: null }; }
   if (reads && !loaded.at) loaded.at = await digest(game.page);
   let out = await attempt(fn);
@@ -8932,7 +8925,6 @@ for (const [i, { name, fn, reads, warm }] of selected.entries()) {
     }
     loaded = { warm: nextWarm, at: null };
   }
-  timing.push([name, reads ? 1 : 0, Math.round((Date.now() - began - (bootMs - boot0)) / 100) / 10, Math.round((bootMs - boot0) / 100) / 10]);
   const took = `${((Date.now() - began) / 1000).toFixed(0)}s`.padStart(4);
   if (out.ok) {
     console.log(`  ok   ${took} ${name}${out.detail ? '  ' + JSON.stringify(out.detail).slice(0, 120) : ''}`);
@@ -8949,7 +8941,6 @@ if (SHOTS) {
   await screenshots(game.page);
 }
 
-if (process.env.GITHUB_ACTIONS) console.log(`::notice title=timing ${SHARD.join('/')}::${JSON.stringify(timing)}`); // TEMP timing
 await game.close();
 
 console.log(`\n${selected.length - failed}/${selected.length} checks passed`);
