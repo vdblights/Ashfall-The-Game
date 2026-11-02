@@ -1835,11 +1835,13 @@ export class Enemy {
     // the head out where the body is not (`Player.head`).
     const eyeY = this.pos.y + (1.5 - CROUCH.drop * this.crouch - this.stoop) * this.type.scale;
     const H = player.head;
-    const sees = dist < this.type.detect &&
+    // a storm takes half of how far anything sees (storm.js)
+    const detect = this.type.detect * (this.game.sight ?? 1);
+    const sees = dist < detect &&
       world.lineOfSight(this.pos.x, eyeY, this.pos.z, H.x, H.y, H.z);
 
     // spotted the target, or got close enough to hear them
-    if (!this.alerted && ((sees && dist < this.type.detect) || dist < 16)) this.alert(time);
+    if (!this.alerted && (sees || dist < 16)) this.alert(time);
 
     // Anything that fights from high ground stays on it: it overwatches while
     // unalerted and never walks itself back down to street level.
@@ -2184,7 +2186,7 @@ export class Enemy {
       return;
     }
 
-    if (dist > t.detect) return;
+    if (dist > t.detect * (this.game.sight ?? 1)) return;
     // burst discipline
     if (t.burst) {
       if (this.burstLeft <= 0) this.burstLeft = t.burst;

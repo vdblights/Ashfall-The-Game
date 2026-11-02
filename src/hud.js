@@ -11,7 +11,7 @@ export class HUD {
       healthFill: $('health-fill'), healthNum: $('health-num'), staminaFill: $('stamina-fill'),
       armourWrap: $('armour-wrap'), armourFill: $('armour-fill'), armourNum: $('armour-num'),
       weaponName: $('weapon-name'), mag: $('mag'), reserve: $('reserve'), ammo: $('ammo'),
-      reloadHint: $('reload-hint'), slots: $('weapon-slots'), crosshair: $('crosshair'),
+      reloadHint: $('reload-hint'), slots: $('weapon-slots'), crosshair: $('crosshair'), scope: $('scope'),
       hitmarker: $('hitmarker'), killfeed: $('killfeed'), banner: $('wave-banner'),
       flash: $('damage-flash'), hurtDirs: $('hurt-dirs'), toast: $('pickup-toast'),
       nades: $('nades'), nadeCount: $('nade-count'),
@@ -155,6 +155,14 @@ export class HUD {
     const spreadPx = (ws.adsT > 0.6 ? w.def.adsSpread : w.def.spread) * 900
       * (Math.hypot(p.velocity.x, p.velocity.z) > 1 ? 1.4 : 1);
     this.setCrosshairSpread(spreadPx, ws.adsT > 0.75);
+    // a scope is looked through, not at: once the aim has settled the gun
+    // goes and the eyepiece's field is the screen (main.js hides the model)
+    const scoped = !!w.def.scope && ws.adsT > 0.85 && ws.switching <= 0 && !ws.reloading;
+    if (scoped !== this.scoped) {
+      this.scoped = scoped;
+      this.el.scope?.classList.toggle('hidden', !scoped);
+      this.el.crosshair.style.opacity = scoped ? '0' : '';
+    }
 
     this.el.nadeCount.textContent = game.nades;
     this.el.nades.classList.toggle('empty', game.nades === 0);

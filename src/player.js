@@ -2,6 +2,37 @@ import * as THREE from 'three';
 import { SUPPORT_RADIUS } from './world.js';
 
 /** Keyboard + mouse state, including pointer-lock look deltas. */
+/**
+ * A controller, read the way the keyboard is.
+ *
+ * Every button is a key code pressed and released (`PAD_KEYS`), through the
+ * same `keys` set and the same `onKey`/`onKeyUp` the keyboard drives, so a
+ * button does exactly what its key does and nothing downstream had to learn
+ * about controllers: a tap of the d-pad's right is E's tap and works a door,
+ * holding it leans like holding E. The triggers are the mouse buttons, and
+ * only on a change, so a semi-automatic still wants a fresh pull per shot.
+ * The sticks are the two things a key cannot be: the left one is how far as
+ * well as which way (`pad.move`, which `Player` adds to the keys), and the
+ * right one a turn rate (`pad.look`, radians a second), shaped past a dead
+ * zone the way the uncaptured mouse is. A controller needs no pointer lock,
+ * so it plays wherever the cursor fallback does. The standard mapping is
+ * the only one read; anything else is a pad whose buttons are where its
+ * maker put them.
+ */
+export const PAD_KEYS = {
+  0: 'Space',        // A: jump, and a pull-up
+  1: 'KeyC',         // B: crouch, or a slide out of a sprint
+  2: 'KeyR',         // X: reload
+  4: 'KeyG',         // LB: a grenade, cooked while held
+  5: 'KeyF',         // RB: melee
+  12: 'Digit5',      // d-pad up: the marksman rifle
+  13: 'KeyM',        // d-pad down: mute
+  14: 'KeyQ',        // d-pad left: lean left, or a tap cycles the weapon
+  15: 'KeyE',        // d-pad right: lean right, or a tap works a door
+};
+const PAD_DEAD = 0.18;
+const PAD_LOOK = 3.4;          // radians a second at full deflection
+
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -18,6 +49,10 @@ export class Input {
     this.invertY = false;
     this.onKey = null;
     this.onKeyUp = null;
+    // a controller (`pollPad`): the left stick's walk, the right stick's
+    // turn rate, and which buttons it is holding down
+    this.pad = { connected: false, move: new THREE.Vector2(), look: new THREE.Vector2(), held: new Set(), sprint: false, trig: [false, false] };
+    this.onPadPress = null;
 
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
@@ -120,6 +155,83 @@ export class Input {
   exitLock() { document.exitPointerLock?.(); }
   down(code) { return this.keys.has(code); }
   endFrame() { this.lookDelta.set(0, 0); this.wheel = 0; }
+
+  /** Read the first standard controller, once a frame (`Game.frame`). */
+  pollPad() {
+    const pad = this.pad;
+    const all = navigator.getGamepads ? navigator.getGamepads() : [];
+    let gp = null;
+    for (const g of all || []) if (g && g.connected && g.mapping === 'standard') { gp = g; break; }
+    if (!gp) {
+      if (pad.connected) this._padLost();
+      return;
+    }
+    if (!pad.connected) { pad.connected = true; if (this.onPadConnect) this.onPadConnect(gp.id); }
+    const shape = (v) => {
+      const a = Math.abs(v);
+      if (a < PAD_DEAD) return 0;
+      const t = Math.min(1, (a - PAD_DEAD) / (1 - PAD_DEAD));
+      return Math.sign(v) * t;
+    };
+    const ax = (i) => gp.axes[i] || 0;
+    pad.move.set(shape(ax(0)), shape(ax(1)));
+    if (pad.move.lengthSq() > 1) pad.move.normalize();
+    // the look stick eases in, so a small push is a fine correction
+    const lx = shape(ax(2)), ly = shape(ax(3));
+    pad.look.set(Math.sign(lx) * lx * lx, Math.sign(ly) * ly * ly * (this.invertY ? -1 : 1))
+      .multiplyScalar(PAD_LOOK * this.sensitivity);
+
+    const pressed = (i) => {
+      const b = gp.buttons[i];
+      return !!b && (b.pressed || b.value > 0.5);
+    };
+    for (const [i, code] of Object.entries(PAD_KEYS)) {
+      const now = pressed(+i), was = pad.held.has(+i);
+      if (now === was) continue;
+      if (now) {
+        pad.held.add(+i);
+        this.keys.add(code);
+        if (this.onKey) this.onKey(code);
+      } else {
+        pad.held.delete(+i);
+        this.keys.delete(code);
+        if (this.onKeyUp) this.onKeyUp(code);
+      }
+    }
+    // the rest are not keys: next weapon, the sprint latch, the armoury and
+    // the menu buttons (`onPadPress`), and the triggers
+    for (const i of [0, 3, 8, 9, 10]) {
+      const now = pressed(i), was = pad.held.has(100 + i);
+      if (now === was) continue;
+      if (now) pad.held.add(100 + i); else pad.held.delete(100 + i);
+      if (!now) continue;
+      if (i === 3) this.wheel += 1;
+      if (i === 10) pad.sprint = true;
+      if (this.onPadPress) this.onPadPress(i);
+    }
+    // a click of the stick sprints until the stick comes back to rest
+    if (pad.move.lengthSq() < 0.09) pad.sprint = false;
+    if (pad.sprint) this.keys.add('ShiftLeft');
+    else if (pad.hadSprint) this.keys.delete('ShiftLeft');
+    pad.hadSprint = pad.sprint;
+
+    const aim = pressed(6), fire = pressed(7);
+    if (aim !== pad.trig[0]) { this.aim = aim; pad.trig[0] = aim; }
+    if (fire !== pad.trig[1]) { this.fire = fire; pad.trig[1] = fire; }
+  }
+
+  _padLost() {
+    const pad = this.pad;
+    pad.connected = false;
+    for (const [i, code] of Object.entries(PAD_KEYS)) if (pad.held.has(+i)) this.keys.delete(code);
+    if (pad.sprint) this.keys.delete('ShiftLeft');
+    pad.held.clear();
+    pad.move.set(0, 0); pad.look.set(0, 0);
+    pad.sprint = pad.hadSprint = false;
+    if (pad.trig[0]) this.aim = false;
+    if (pad.trig[1]) this.fire = false;
+    pad.trig = [false, false];
+  }
 }
 
 const TARGET = new THREE.Vector3();
@@ -294,6 +406,11 @@ export class Player {
 
     this.yaw -= input.lookDelta.x;
     this.pitch -= input.lookDelta.y;
+    // a controller's right stick is a turn rate, on game time
+    if (input.pad) {
+      this.yaw -= input.pad.look.x * dt;
+      this.pitch -= input.pad.look.y * dt * 0.75;
+    }
     this.pitch = THREE.MathUtils.clamp(this.pitch, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
 
     // recoil decays back toward the original point of aim
@@ -324,6 +441,8 @@ export class Player {
     if (input.down('KeyS')) iz += 1;
     if (input.down('KeyA')) ix -= 1;
     if (input.down('KeyD')) ix += 1;
+    // the left stick adds how far as well as which way
+    if (input.pad) { ix += input.pad.move.x; iz += input.pad.move.y; }
     const moving = ix !== 0 || iz !== 0;
 
     const crouchKey = input.down('ControlLeft') || input.down('ControlRight') || input.down('KeyC');
@@ -377,7 +496,9 @@ export class Player {
     let wx = 0, wz = 0;
     if (moving) {
       const len = Math.hypot(ix, iz);
-      const nx = ix / len, nz = iz / len;
+      // a key is all the way; a stick half over walks at half the pace
+      const push = Math.min(1, len);
+      const nx = ix / len * push, nz = iz / len * push;
       wx = sin * nz + cos * nx;
       wz = cos * nz - sin * nx;
     }

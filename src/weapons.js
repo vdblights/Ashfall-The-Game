@@ -239,6 +239,34 @@ function optic(g, z) {
 }
 
 
+/**
+ * A rifle scope on two rings, its tube on the sight line, hollow, so the
+ * view through it at the shoulder is the tube's own bore — and over that
+ * the HUD draws the reticle (`hud.scope`) once the aim is settled.
+ */
+function scope(g, z) {
+  g.add(box(0.045, 0.012, 0.20, DARK, 0, 0.062, z));                  // rail
+  for (const dz of [-0.055, 0.055]) {
+    g.add(box(0.012, SIGHT_Y - 0.068, 0.016, DARK, 0, (SIGHT_Y + 0.068) / 2 - 0.004, z + dz, 0, 0, 0, 0.002));
+    g.add(turned([[0.0205, z + dz - 0.009], [0.0235, z + dz - 0.009], [0.0235, z + dz + 0.009], [0.0205, z + dz + 0.009]],
+      DARK, SIGHT_Y, { sides: 18 }));
+  }
+  // tube, objective bell forward, eyepiece aft, a ring profile all round
+  g.add(turned([
+    [0.026, z - 0.165], [0.030, z - 0.165], [0.030, z - 0.110], [0.0205, z - 0.080], [0.0205, z + 0.090],
+    [0.024, z + 0.110], [0.024, z + 0.150], [0.020, z + 0.150], [0.020, z + 0.112], [0.0175, z + 0.092],
+    [0.0175, z - 0.078], [0.026, z - 0.108],
+  ], DARK, SIGHT_Y, { sides: 24, crease: 50 }));
+  // windage and elevation turrets
+  g.add(turned([[0, -0.012], [0.011, -0.012], [0.011, 0.012], [0, 0.012]], DARK, 0, { sides: 14 }).translateY(SIGHT_Y + 0.022).rotateX(Math.PI / 2));
+  g.add(turned([[0, -0.012], [0.011, -0.012], [0.011, 0.012], [0, 0.012]], DARK, 0, { sides: 14 }).translateX(0.022).translateY(SIGHT_Y).rotateY(Math.PI / 2));
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.026, 20), new THREE.MeshBasicMaterial({
+    color: 0x3d7f8f, transparent: true, opacity: 0.22, depthWrite: false,
+  }));
+  lens.position.set(0, SIGHT_Y, z - 0.16);
+  g.add(lens);
+}
+
 /* ------------------------------------------------------------------- hands */
 
 const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -576,7 +604,7 @@ function buildSMG() {
  * octagonal handguard, the A-frame front sight, a birdcage, and a stock
  * riding a buffer tube.
  */
-function buildRifle() {
+function buildRifle({ marksman = false } = {}) {
   const g = new THREE.Group();
   // upper receiver, and the rail along it
   g.add(side([
@@ -605,8 +633,13 @@ function buildRifle() {
   // grip, raked back, with swells between the fingers
   const GRIP = { c: [0.156, -0.098], rx: -0.38, len: 0.10, depth: 0.056 };
   g.add(side(gripOutline(GRIP.c, GRIP.rx, GRIP.len, GRIP.depth, { top: -0.026, grooves: 2 }), 0.048, POLY, { bevel: 0.009 }));
-  // STANAG magazine, its few degrees of curve forward
-  g.add(side([
+  // STANAG magazine, its few degrees of curve forward; a marksman's is a
+  // straight, shorter box of twenty heavier rounds
+  if (marksman) g.add(side([
+    [-0.024, -0.040], [0.054, -0.040], [0.052, -0.150, 0.004], [0.056, -0.160, 0.003],
+    [-0.030, -0.160, 0.003], [-0.026, -0.150, 0.004],
+  ], 0.026, DARK, { bevel: 0.004 }));
+  else g.add(side([
     [-0.024, -0.040], [0.054, -0.040], [0.050, -0.100, 0.04], [0.034, -0.182, 0.004],
     [0.038, -0.194, 0.003], [-0.052, -0.194, 0.003], [-0.048, -0.182, 0.004], [-0.030, -0.100, 0.04],
   ], 0.024, DARK, { bevel: 0.004 }));
@@ -627,6 +660,21 @@ function buildRifle() {
   for (const sx of [-1, 1]) for (let i = 0; i < 4; i++) {
     g.add(box(0.002, 0.012, 0.030, DARK, sx * 0.0331, 0.022, -0.200 - i * 0.050, 0, 0, 0, 0.0008));
   }
+  // a marksman's barrel runs on past the handguard, heavier, to a brake
+  if (marksman) {
+    g.add(turned([[0, -0.80], [0.0125, -0.80], [0.0125, -0.400], [0, -0.400]], METAL, 0.025, { sides: 16 }));
+    g.add(turned([[0, -0.86], [0.0170, -0.86], [0.0185, -0.85], [0.0185, -0.79], [0.0150, -0.785], [0, -0.785]],
+      DARK, 0.025, { sides: 8, crease: 30, spin: Math.PI / 8 }));
+    for (const sx of [-1, 1]) for (let i = 0; i < 3; i++) g.add(box(0.004, 0.010, 0.010, METAL, sx * 0.0175, 0.025, -0.80 - i * 0.017, 0, 0, 0, 0.001));
+    scope(g, 0.0);
+    shootingHandFor(g, GRIP);
+    supportHand(g, {
+      c: v3(0, 0.022, -0.31), hu: 0.036, hf: 0.034, stack: [-0.028, -0.009, 0.01, 0.028],
+      thumb: [v3(-0.038, -0.010, -0.27), v3(-0.044, 0.006, -0.31), v3(-0.042, 0.018, -0.35)],
+    });
+    const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.025, -0.865); g.add(muzzle);
+    return { model: g, muzzle };
+  }
   // barrel, gas block and A-frame front sight, birdcage
   g.add(turned([[0, -0.548], [0.0108, -0.548], [0.0108, -0.400], [0, -0.400]], METAL, 0.025, { sides: 16 }));
   g.add(side([
@@ -640,11 +688,7 @@ function buildRifle() {
   g.add(turned([[0, -0.580], [0.0065, -0.580], [0.0065, -0.612], [0.0125, -0.612], [0.0125, -0.552], [0.0108, -0.546],
     [0.0108, -0.540], [0, -0.540]], DARK, 0.025, { sides: 12, crease: 50 }));
   optic(g, 0.06);
-  shootingHand(g, {
-    c: v3(0, GRIP.c[1], GRIP.c[0]), rx: GRIP.rx, hu: 0.024, hf: GRIP.depth / 2, stack: [-0.044, -0.020, 0.003, 0.026],
-    index: [v3(0.031, -0.044, 0.104), v3(0.030, -0.022, 0.060), v3(0.029, -0.018, 0.012)],
-    thumb: [v3(0.020, -0.034, 0.168), v3(-0.004, -0.028, 0.174), v3(-0.030, -0.034, 0.140), v3(-0.032, -0.030, 0.098)],
-  });
+  shootingHandFor(g, GRIP);
   supportHand(g, {
     c: v3(0, 0.022, -0.31), hu: 0.036, hf: 0.034, stack: [-0.028, -0.009, 0.01, 0.028],
     thumb: [v3(-0.038, -0.010, -0.27), v3(-0.044, 0.006, -0.31), v3(-0.042, 0.018, -0.35)],
@@ -652,6 +696,18 @@ function buildRifle() {
   const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0.025, -0.615); g.add(muzzle);
   return { model: g, muzzle };
 }
+
+/** The rifle's shooting hand, round its grip; the marksman rifle shares it. */
+function shootingHandFor(g, GRIP) {
+  shootingHand(g, {
+    c: v3(0, GRIP.c[1], GRIP.c[0]), rx: GRIP.rx, hu: 0.024, hf: GRIP.depth / 2, stack: [-0.044, -0.020, 0.003, 0.026],
+    index: [v3(0.031, -0.044, 0.104), v3(0.030, -0.022, 0.060), v3(0.029, -0.018, 0.012)],
+    thumb: [v3(0.020, -0.034, 0.168), v3(-0.004, -0.028, 0.174), v3(-0.030, -0.034, 0.140), v3(-0.032, -0.030, 0.098)],
+  });
+}
+
+/** A marksman rifle: the carbine's receiver, a long heavy barrel, a scope. */
+function buildMarksman() { return buildRifle({ marksman: true }); }
 
 /**
  * An M1014: an alloy receiver, a long barrel over a magazine tube, a forend
@@ -772,6 +828,14 @@ export const WEAPON_DEFS = [
     pellets: 9, spread: 0.075, adsSpread: 0.048, recoil: { v: 0.055, h: 0.016 }, kick: 0.11,
     reload: 2.6, adsTime: 0.22, adsFovMul: 0.9, range: 40, tracer: 0.8, unlock: 3, falloff: 22,
     hip: new THREE.Vector3(0.20, -0.155, -0.64), ads: new THREE.Vector3(0, -0.069, -0.56),
+  },
+  {
+    // bought in the armoury, never handed out by a wave (`unlock` Infinity)
+    id: 'dmr', name: 'M110 MARKSMAN', sound: 'rifle', build: buildMarksman, scope: true,
+    auto: false, damage: 75, headMult: 2.6, rpm: 170, mag: 10, startReserve: 40, maxReserve: 80,
+    pellets: 1, spread: 0.034, adsSpread: 0.0009, recoil: { v: 0.042, h: 0.010 }, kick: 0.07,
+    reload: 2.5, adsTime: 0.30, adsFovMul: 0.36, range: 320, tracer: 1.3, unlock: Infinity,
+    hip: new THREE.Vector3(0.20, -0.16, -0.62), ads: new THREE.Vector3(0, -0.099, -0.40),
   },
 ];
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN, SECTOR, outskirtsHeight } from './city.js';
 import { Ashfall, settleAsh } from './ash.js';
+import { Storm } from './storm.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
 import { Player, Input, LEAN } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
@@ -148,6 +149,7 @@ class Game {
     // with height (see atmosphere.js). The colour is not this one — it is the
     // sky's own horizon in whichever direction you are looking.
     this.scene.fog = new THREE.FogExp2(0x8a6748, 0.0050);
+    this.fogBase = this.scene.fog.density;     // a storm thickens it from here
     this.baseFov = 78;
     this.camera = new THREE.PerspectiveCamera(this.baseFov, innerWidth / innerHeight, 0.06, 600);
 
@@ -265,6 +267,8 @@ class Game {
           seed: getSeed(), edge: SECTOR.edge, heightAt: outskirtsHeight,
           barrels: this.barrels.list, drumHeight: BARREL.height,
         }));
+        // and the rain a storm wave brings, kept out of rooms by the ash's roof map
+        this.storm = reserve(() => new Storm(this.scene, this.ashfall.roofs));
       }],
       ['Arming you', 18, () => {
         this.weapons = reserve(() => new WeaponSystem(this.viewScene, this));
@@ -500,6 +504,7 @@ class Game {
     // supply — it has nothing below the horizon worth reflecting.
     this.hemi = new THREE.HemisphereLight(0xb4b2ac, 0x7d6650, HEMI);
     this.scene.add(this.hemi);
+    this.hemiBase = HEMI;
 
     const sun = new THREE.DirectionalLight(SUN_COLOR, 3.0);
     sun.position.copy(SUN_DIR).multiplyScalar(SUN_DISTANCE);
@@ -514,6 +519,7 @@ class Game {
     this.scene.add(sun);
     this.scene.add(sun.target);
     this.sun = sun;
+    this.sunBase = sun.intensity;
 
     // cool bounce from the opposite side so shadowed faces stay readable —
     // lighter than it was, because the sky light now comes from that side too
@@ -657,7 +663,8 @@ class Game {
     this.sky.material.uniforms.cloudLow.value = cfg.plain ? 1 : 0;
     // a Lambert twin cannot see the sky's environment, which is most of the
     // light a shaded wall gets; the hemisphere stands in for it
-    this.hemi.intensity = cfg.plain ? HEMI_PLAIN : HEMI;
+    this.hemiBase = this.hemi.intensity = cfg.plain ? HEMI_PLAIN : HEMI;
+    this.storm?.setTier(level);
 
     this.activeTier = level;
     this.resize();
@@ -929,6 +936,7 @@ class Game {
       if (code === 'Digit2') this.weapons.select(1, this.time);
       if (code === 'Digit3') this.weapons.select(2, this.time);
       if (code === 'Digit4') this.weapons.select(3, this.time);
+      if (code === 'Digit5') this.weapons.select(4, this.time);
       if (code === 'KeyB') this.openArmoury();
       if (code === 'KeyF' || code === 'KeyV') this.weapons.startMelee(this.time);
       if (code === 'KeyG' && this.cookStart < 0 && this.nades > 0 && !this.player.dead) {
@@ -942,6 +950,25 @@ class Game {
         this.hud.toast(this.settings.muted ? 'AUDIO MUTED' : 'AUDIO ON');
       }
     };
+
+    // A controller's A and its menu button press whichever button a screen
+    // is showing — DEPLOY, BEGIN, RESUME, REDEPLOY, the armoury's DEPLOY —
+    // so a run can be started and finished without the mouse; in play the
+    // menu button pauses, and the View button shuts the armoury it opened.
+    this.input.onPadPress = (i) => {
+      if (this.state === 'playing') {
+        if (i === 9) this.pause();
+        if (i === 8) this.openArmoury();
+        return;
+      }
+      if (this.state === 'armoury' && (i === 8 || i === 9)) { this.closeArmoury(); return; }
+      if (i !== 0 && i !== 9) return;
+      for (const id of ['brief-btn', 'start-btn', 'resume-btn', 'retry-btn', 'armoury-close']) {
+        const b = document.getElementById(id);
+        if (b && b.offsetParent !== null && !b.closest('.hidden')) { b.click(); return; }
+      }
+    };
+    this.input.onPadConnect = () => this.hud?.toast('CONTROLLER CONNECTED');
 
     this.input.onKeyUp = (code) => {
       if (code === 'KeyG' && this.cookStart >= 0) this.throwGrenade();
@@ -1040,6 +1067,7 @@ class Game {
     this.playerExposed = false;
     this.pushCalled = -1;
     this.runStart = this.time;
+    this.storm.reset();
 
     // The operation: which act it has reached, what has been done for it,
     // and whether the convoy is out — after which the run is endless.
@@ -1107,6 +1135,7 @@ class Game {
 
   toMenu() {
     this.state = 'menu';
+    this.storm.reset();
     audio.stopAmbience();
     document.getElementById('pause').classList.add('hidden');
     document.getElementById('gameover').classList.add('hidden');
@@ -1118,6 +1147,7 @@ class Game {
 
   gameOver() {
     this.state = 'dead';
+    this.storm.clear();
     audio.death();
     audio.stopAmbience();
     this.input.exitLock();
@@ -1188,11 +1218,15 @@ class Game {
     // the act it is, on the wave that opens one, and the handler's call
     const act = actFor(w);
     const count = this.bossPending ? `${total} HOSTILES &middot; WARLORD` : `${total} HOSTILES`;
-    this.hud.banner('WAVE ' + w, act.opens && !act.endless ? `${act.title} &middot; ${act.name} &middot; ${count}` : count);
+    // some waves come in under a storm (storm.js): rain, wind, and half the sight
+    const storm = this.storm.begin(w, this.time);
+    const sub = act.opens && !act.endless ? `${act.title} &middot; ${act.name} &middot; ${count}` : count;
+    this.hud.banner('WAVE ' + w, storm ? `${sub} &middot; STORM` : sub);
     if (this.op) this.op.act = act.act;
     if (act.opens && !act.endless) this.say(RADIO.act[act.act]);
     if (w > FINALE) this.say(RADIO.waveEndless, w);
     else if (RADIO.wave[w]) this.say(RADIO.wave[w]);
+    if (storm) this.say(RADIO.storm, w);
     if (unlocked.length) setTimeout(() => this.hud.toast('WEAPON RECOVERED: ' + unlocked.join(', ')), 1200);
   }
 
@@ -1225,6 +1259,7 @@ class Game {
       } else if (this.aliveCount === 0) {
         if (!this.waveClearedAt) {
           this.waveClearedAt = this.time;
+          this.storm.clear();
           const bonus = 250 * this.wave;
           this.score += bonus;
           this.hud.banner('SECTOR CLEAR', `+${bonus} &middot; B FOR THE ARMOURY`);
@@ -1988,6 +2023,8 @@ class Game {
     // the pause screen, so an objective's deadline or the intermission
     // before the next wave ran out while nobody was playing.
     const frozen = this.state === 'paused' || this.state === 'armoury';
+    // a controller is read once a frame, like the mouse
+    this.input.pollPad();
     for (let i = 0; i < steps; i++) {
       if (!frozen) this.time += dt;
       if (this.state === 'playing') this.step(dt);
@@ -2011,6 +2048,9 @@ class Game {
     const wind = this.paintedMaterials?.weedMat?.userData.windTime;
     if (wind) wind.value = this.time;
     this.updateAsh();
+    this.storm.apply(this);
+    const rain = Math.round(this.storm.level * 50) / 50;
+    if (rain !== this.rainHeard) audio.rain(this.rainHeard = rain);
     this.perf.beforeRender();
     this.render();
     const ended = performance.now();
@@ -2102,6 +2142,10 @@ class Game {
 
   step(dt) {
     const input = this.input;
+    // the weather first: how far a hostile sees this step depends on it
+    const strike = this.storm.update(dt, this.time);
+    if (strike) audio.thunder(strike.gain, strike.delay);
+    this.sight = this.storm.sight;
 
     this.player.update(dt, this.time, input);
     this.weapons.update(dt, this.time, input, this.player);
@@ -2176,6 +2220,7 @@ class Game {
     this.updateAmbience(dt);
     this.effects.update(dt);
     this.hud.update(this);
+    this.weapons.root.visible = !this.hud.scoped;
 
     // FOV blends when aiming and when sprinting
     const ads = this.weapons.adsT;

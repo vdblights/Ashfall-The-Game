@@ -3341,6 +3341,9 @@ export function buildCity(scene, painted = null) {
   registerHeaps(world, heaps);
   // the doors last of all: they swing, so nothing placed may lean on them
   const doors = reserve(() => registerDoors(scene, world, doorMat, glassMat));
+  // and the gangways between roofs across a street, which are hung on the
+  // city rather than laid out in it (see `crossRoofs`)
+  reserve(() => crossRoofs(group, world, { darkConcrete, ironMat, crates }));
   // every collider is in now: index them (see `World.seal`)
   world.seal();
 
@@ -4605,6 +4608,158 @@ export function buildCity(scene, painted = null) {
    * the city, like any other: the layout check proves the change stops at
    * the buildings it was meant to change.
    */
+  /**
+   * Gangways between two stair roofs across a street: a plank deck on two
+   * steel stringers, railed both sides, a level walk over both parapets at
+   * a little over the higher one, and a flight of block steps up to it on
+   * each roof. Every piece is a collider — the steps and the deck decks, the
+   * rails ceilings — so it is the city, and it is hung on it last of all,
+   * after the doors: nothing placed before it may lean on it, and it is laid
+   * by a hash of where the roofs are, never by a roll. Its meshes are built
+   * in a `reserve`, unbilled, in materials the city already wears, so the
+   * stream that picks spawns is where it was; its boxes carry `crossing`,
+   * so the layout check's prints leave them out the way they leave the doors.
+   */
+  function crossRoofs(g, w, { darkConcrete: stepMat, ironMat: steel, crates: woods }) {
+    const W = 1.4, RAIL = 0.07, RISE = 0.24, TREAD = 0.3, APPROACH = 1.4;
+    const MAX_DD = 2.6, MAX_GAP = 14, PER_ROOF = 2;
+    const used = new Map();          // roof → the rects its steps already take
+    const out = [];
+    const S = w.stairs;
+    const inside = (q, r) => q.minX >= r.minX - 1e-6 && q.maxX <= r.maxX + 1e-6 && q.minZ >= r.minZ - 1e-6 && q.maxZ <= r.maxZ + 1e-6;
+    const hits = (q, o) => q.minX < o.maxX && q.maxX > o.minX && q.minZ < o.maxZ && q.maxZ > o.minZ;
+    // is this stretch of roof free to stand a flight on: inside the roof,
+    // off the bulkhead and its door, clear of a plant box and of another
+    // crossing's steps
+    const clear = (st, q) => {
+      if (!inside(q, st.roof)) return false;
+      const hut = st.shaft;
+      if (hits(q, { minX: hut.minX - 1.4, maxX: hut.maxX + 1.4, minZ: hut.minZ - 1.4, maxZ: hut.maxZ + 1.4 })) return false;
+      if ((used.get(st) || []).some((o) => hits(q, o))) return false;
+      for (const b of w.boxes) {
+        if (b.top <= st.deck + 0.05 || (b.base || 0) > st.deck + 2.5) continue;
+        if (hits(q, b)) return false;
+      }
+      return true;
+    };
+    const pairs = [];
+    for (let a = 0; a < S.length; a++) for (let b = a + 1; b < S.length; b++) {
+      const A = S[a].roof, B = S[b].roof;
+      const ox = Math.min(A.maxX, B.maxX) - Math.max(A.minX, B.minX);
+      const oz = Math.min(A.maxZ, B.maxZ) - Math.max(A.minZ, B.minZ);
+      let axis = null;
+      if (ox > W + 2 && Math.max(B.minZ - A.maxZ, A.minZ - B.maxZ) > 4) axis = 'z';
+      else if (oz > W + 2 && Math.max(B.minX - A.maxX, A.minX - B.maxX) > 4) axis = 'x';
+      if (!axis) continue;
+      // lo is the roof on the low side of the axis
+      const [lo, hi] = (axis === 'x' ? A.maxX < B.minX : A.maxZ < B.minZ) ? [S[a], S[b]] : [S[b], S[a]];
+      const gap = axis === 'x' ? hi.roof.minX - lo.roof.maxX : hi.roof.minZ - lo.roof.maxZ;
+      if (gap > MAX_GAP || Math.abs(lo.deck - hi.deck) > MAX_DD) continue;
+      // a street between them, not a building a metre off
+      if (axis === 'x' ? lo.party.xp || hi.party.xm : lo.party.zp || hi.party.zm) continue;
+      pairs.push({ axis, lo, hi, gap, from: axis === 'x' ? Math.max(A.minZ, B.minZ) : Math.max(A.minX, B.minX),
+        to: axis === 'x' ? Math.min(A.maxZ, B.maxZ) : Math.min(A.maxX, B.maxX) });
+    }
+    // shortest first, so a roof's two crossings go to its nearest neighbours
+    pairs.sort((p, q) => p.gap - q.gap || Math.abs(p.lo.deck - p.hi.deck) - Math.abs(q.lo.deck - q.hi.deck));
+
+    for (const p of pairs) {
+      const { axis, lo, hi } = p;
+      if ((used.get(lo) || []).length >= PER_ROOF || (used.get(hi) || []).length >= PER_ROOF) continue;
+      const H = Math.max(lo.deck, hi.deck) + 1.25;
+      // a flight on a roof: n steps of `RISE` or less up to H, the top one
+      // against the roof's edge, and the approach in front of the first
+      const flight = (st, edge, dir) => {
+        const n = Math.max(1, Math.ceil((H - st.deck) / RISE - 1e-6));
+        return { st, edge, dir, n, rise: (H - st.deck) / n, run: n * TREAD };
+      };
+      const fl = [flight(lo, axis === 'x' ? lo.roof.maxX : lo.roof.maxZ, -1), flight(hi, axis === 'x' ? hi.roof.minX : hi.roof.minZ, 1)];
+      // a rect in (along, across) — along the crossing's axis, across it
+      const R = (a0, a1, c0, c1) => axis === 'x'
+        ? { minX: Math.min(a0, a1), maxX: Math.max(a0, a1), minZ: c0, maxZ: c1 }
+        : { minX: c0, maxX: c1, minZ: Math.min(a0, a1), maxZ: Math.max(a0, a1) };
+      const zone = (f, c) => R(f.edge, f.edge + f.dir * (f.run + APPROACH), c - W / 2 - 0.3, c + W / 2 + 0.3);
+      // where across the overlap: the middle, or as near it as both roofs
+      // have room, by a hash of the pair so it is the same city every time
+      const mid = (p.from + p.to) / 2, room = (p.to - p.from) / 2 - W / 2 - 0.6;
+      let c = null;
+      const flip = hash2(Math.round(mid * 3), Math.round(lo.deck * 7), 911) < 0.5 ? 1 : -1;
+      for (let k = 0; k <= 12 && c === null; k++) {
+        const off = (k % 2 ? 1 : -1) * flip * Math.ceil(k / 2) * 0.75;
+        if (Math.abs(off) > room) continue;
+        if (fl.every((f) => clear(f.st, zone(f, mid + off)))) c = mid + off;
+      }
+      if (c === null) continue;
+      const c0 = c - W / 2, c1 = c + W / 2;
+
+      const stepGeos = [], ironGeos = [], plankGeos = [];
+      const geoAt = (q, y0, y1, tile) => boxGeo(q.maxX - q.minX, y1 - y0, q.maxZ - q.minZ, tile)
+        .translate((q.minX + q.maxX) / 2, (y0 + y1) / 2, (q.minZ + q.maxZ) / 2);
+      const tag = () => { w.boxes[w.boxes.length - 1].crossing = true; };
+      const boxes = [];
+      for (const f of fl) {
+        // the steps: the k-th from the top stands against the edge
+        for (let k = 0; k < f.n; k++) {
+          const top = H - k * f.rise;
+          const q = R(f.edge + f.dir * k * TREAD, f.edge + f.dir * (k + 1) * TREAD, c0, c1);
+          stepGeos.push(geoAt(q, f.st.deck, top, TILE.concrete));
+          w.addDeck(q.minX, q.minZ, q.maxX, q.maxZ, top, f.st.deck); tag();
+          boxes.push(q);
+        }
+        // the side walls of a flight, a rail's height over its treads: a
+        // ceiling, so nothing stands on one, drawn as a solid stringer
+        for (const s of [[c0 - RAIL, c0], [c1, c1 + RAIL]]) {
+          const q = R(f.edge, f.edge + f.dir * f.run, s[0], s[1]);
+          ironGeos.push(geoAt(q, f.st.deck, H + 1.0, TILE.metal));
+          w.addCeiling(q.minX, q.minZ, q.maxX, q.maxZ, H + 1.0, f.st.deck); tag();
+        }
+        used.set(f.st, [...(used.get(f.st) || []), zone(f, c)]);
+      }
+      // the deck, edge to edge over both parapets
+      const deck = R(fl[0].edge, fl[1].edge, c0, c1);
+      const T = 0.12;
+      w.addDeck(deck.minX, deck.minZ, deck.maxX, deck.maxZ, H, H - T); tag();
+      // planks across it, butted, on two steel stringers: a round stops on
+      // the deck the feet stand on, so no gap between them (a 2 cm one let
+      // a round down the middle of every gangway through to the street)
+      const span = Math.abs(fl[1].edge - fl[0].edge), nP = Math.round(span / 0.24);
+      for (let i = 0; i < nP; i++) {
+        const a0 = fl[0].edge + (fl[1].edge > fl[0].edge ? 1 : -1) * (span * i) / nP;
+        const a1 = fl[0].edge + (fl[1].edge > fl[0].edge ? 1 : -1) * (span * (i + 1)) / nP;
+        const sag = 0.006 * hash2(i, Math.round(c * 5), 913);
+        plankGeos.push(geoAt(R(a0, a1, c0 + 0.02, c1 - 0.02), H - 0.05 - sag, H - sag, TILE.wood));
+      }
+      for (const s of [c0 + 0.08, c1 - 0.18]) ironGeos.push(geoAt(R(fl[0].edge, fl[1].edge, s, s + 0.1), H - T, H - 0.05, TILE.metal));
+      // the rails over the street: a ceiling a rail's height over the deck,
+      // drawn as posts, a top rail and a mid rail
+      for (const s of [[c0 - RAIL, c0], [c1, c1 + RAIL]]) {
+        const q = R(fl[0].edge, fl[1].edge, s[0], s[1]);
+        w.addCeiling(q.minX, q.minZ, q.maxX, q.maxZ, H + 1.05, H - T); tag();
+        ironGeos.push(geoAt(q, H + 0.98, H + 1.05, TILE.metal), geoAt(q, H + 0.5, H + 0.55, TILE.metal));
+        const posts = Math.max(2, Math.round(span / 1.5) + 1);
+        for (let i = 0; i < posts; i++) {
+          const a = fl[0].edge + (fl[1].edge > fl[0].edge ? 1 : -1) * (span * i) / (posts - 1);
+          ironGeos.push(geoAt(R(a - 0.03, a + 0.03, s[0], s[1]), H - T, H + 0.98, TILE.metal));
+        }
+      }
+      const put = (geos, mat) => {
+        const m = new THREE.Mesh(mergeIntoOne(geos), mat);
+        m.castShadow = m.receiveShadow = true;
+        m.userData.unbilled = true;
+        m.userData.crossing = true;
+        g.add(m);
+        w.solids.push(m);
+        return m;
+      };
+      put(stepGeos, stepMat);
+      put(ironGeos, steel);
+      put(plankGeos, woods[Math.floor(hash2(Math.round(c * 3), Math.round(H * 3), 917) * woods.length)]);
+      out.push({ ...deck, axis, deck: H, across: c, width: W, ends: fl.map((f) => ({ edge: f.edge, dir: f.dir, foot: f.edge + f.dir * f.run, y: f.st.deck })) });
+      Object.defineProperty(out[out.length - 1], 'stairs', { value: [lo, hi], enumerable: false });
+    }
+    w.crossings = out;
+  }
+
   function stairwell(g, w, s, x, z, bw, bd, h, conc, metal, tint, body, cap, party, under, footprint) {
     const { LANE, SPINE, WALL, TREAD, STEPS, LD, FL, Lin, Win, THICK, HUT, DOOR } = STAIR;
     const D = h + 0.8;                              // the roof: the top of the cap
@@ -4759,6 +4914,9 @@ export function buildCity(scene, painted = null) {
       clear: Math.min(2 * FR - THICK, DOOR),
       path,
       floors: [],
+      // which of its sides look onto a building a metre off (`crossRoofs`
+      // only bridges a street)
+      party: { ...party },
     };
     upperFloors(g, w, s, stair, levels, x, z, bw, bd, under, footprint, inner, party, conc, metal, tint, pt, vA);
     w.stairs.push(stair);

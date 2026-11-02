@@ -64,7 +64,7 @@ check('boots without errors and builds a city', { reads: true }, async (page) =>
   expect(boot.boxes > 100, `only ${boot.boxes} collision boxes`);
   expect(boot.solids > 100, `only ${boot.solids} raycast solids`);
   expect(boot.perches >= 4, `only ${boot.perches} perches generated`);
-  expect(boot.weapons === 4, `${boot.weapons} weapons`);
+  expect(boot.weapons === 5, `${boot.weapons} weapons`);
   return boot;
 });
 
@@ -4356,7 +4356,7 @@ check('every prop stands clear of the rest, inside the sector, and on its floor'
       const fs = corners(a).map(([x, z]) => floorAt(x, z));
       if (Math.max(...fs) - Math.min(...fs) > 0.01) unlevel++;
       for (const b of B) {
-        if (b === a || b.floor || b.heap || b.top <= 0.55 || b.prop === a.prop) continue;
+        if (b === a || b.floor || b.heap || b.top <= 0.55 || b.prop === a.prop || (b.base || 0) >= a.top) continue;
         if (a.maxX < b.minX || b.maxX < a.minX || a.maxZ < b.minZ || b.maxZ < a.minZ) continue;
         const d = depth(a, b);
         if (d > 0.05) { overlaps++; if (eg.length < 4) eg.push([+a.cx.toFixed(1), +a.cz.toFixed(1), +d.toFixed(2)]); }
@@ -4605,7 +4605,7 @@ const CITY_FINGERPRINT = () => {
   // a door's leaves are the one collider that moves, and they are hung last,
   // in doorways the rest of the city was laid out round: they are in the
   // counts and not in the prints, so the prints say nothing else moved
-  const still = g.world.boxes.filter((b) => !b.door);
+  const still = g.world.boxes.filter((b) => !b.door && !b.crossing);
   const placed = still.filter((b) => !b.heap);
   return {
     boxes: g.world.boxes.length,
@@ -5427,6 +5427,153 @@ check('ash falls in the open and not under a roof, smoke stands over the city, a
   return r;
 });
 
+check('a storm wave brings rain and wind, halves how far anything sees, and clears with the sector', { weight: 3 }, async (page) => {
+  // Storm waves (storm.js) are weather, not a filter: the haze, the sun, the
+  // cloud, the wind and the rain are uniforms and intensities a storm turns,
+  // and the part that plays is `sight`, which a hostile reads where it reads
+  // its `detect`. So this asks the schedule, that a storm rises and clears on
+  // game time and draws nothing from the seeded stream, that a raider 40 m
+  // off sees you on a clear day and not in a storm, and — in frames — that
+  // the rain falls in the open and not through a shop's ceiling.
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.startRun();
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const quiet = () => { g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; };
+    const run = (s) => { for (let i = 0; i < s * 60; i++) { g.time += 1 / 60; g.step(1 / 60); quiet(); g.storm.apply(g); } };
+    const schedule = [];
+    for (let w = 1; w <= 20; w++) if (g.storm.begin(w, g.time)) schedule.push(w);
+    g.storm.reset();
+
+    // wave 5, under weather
+    g.wave = 4;
+    const banners = [];
+    const banner = g.hud.banner.bind(g.hud);
+    g.hud.banner = (t, sub) => { if (/^WAVE/.test(t)) banners.push(sub); banner(t, sub); };
+    g.startWave(); quiet();
+    // a hostile kept alive so the sector is not clear
+    const { target: spot, px, pz } = window.__place(40);
+    g.player.reset(px, pz);
+    const keep = g.spawnEnemy('scavenger');
+    keep.pos.set(spot.x + 200, 0, spot.z + 200); keep.update = () => {};
+    g.startWave = () => {};
+    const rose = [];
+    for (let k = 0; k < 4; k++) { run(2.5); rose.push(+g.storm.level.toFixed(2)); }
+    // a minute of storm, lightning and all, and not one draw of the stream
+    const mark0 = Math.random.mark();
+    let strikes = 0;
+    for (let i = 0; i < 3600; i++) { g.time += 1 / 60; if (g.storm.update(1 / 60, g.time)) strikes++; g.storm.apply(g); }
+    const pureStorm = Math.random.mark() === mark0;
+    const full = {
+      fog: +(g.scene.fog.density / g.fogBase).toFixed(2),
+      sun: +(g.sun.intensity / g.sunBase).toFixed(2),
+      sky: g.sky.material.uniforms.storm.value,
+      wind: +(g.ashfall.ashMat.uniforms.wind.value.length() / Math.hypot(0.85, 0.3)).toFixed(2),
+      rain: g.storm.rain.visible,
+    };
+
+    // a raider 40 m off with a clear line to you: does it see you?
+    const seen = () => {
+      const e = g.spawnEnemy('raider');
+      e.pos.set(spot.x, 0, spot.z); e.group.position.copy(e.pos);
+      e.nextFire = 1e9; e.alerted = false;
+      e.update(1 / 60, g.time, g.player, g.world);
+      const saw = e.alerted;
+      e.alive = false; g.scene.remove(e.group);
+      g.enemies.splice(g.enemies.indexOf(e), 1);
+      return saw;
+    };
+    const inStorm = seen();
+
+    // the sector clears, and so does the weather
+    keep.alive = false;
+    run(12);
+    const after = { level: g.storm.level, fog: +(g.scene.fog.density / g.fogBase).toFixed(2), rain: g.storm.rain.visible };
+    const clearDay = seen();
+    return { schedule, banner: banners.at(-1), rose, pureStorm, strikes, full, inStorm, clearDay, after };
+  });
+
+  // rain on and off, in frames: on the plaza and three metres inside shops
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.applyQuality('high');
+    g.renderer.setPixelRatio(g.renderer.getPixelRatio() / 2);
+    g.resize();
+    if (g.viewScene) g.viewScene.visible = false;
+    const gl = g.renderer.getContext();
+    const frame = () => {
+      g.storm.apply(g);
+      g.render();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return px;
+    };
+    window.__rainChanged = ([x, y, z], [tx, ty, tz]) => {
+      g.camera.position.set(x, y, z);
+      g.camera.lookAt(tx, ty, tz);
+      g.camera.updateMatrixWorld();
+      g.storm.level = 1; g.storm.target = 1;
+      const a = frame();
+      g.storm.level = 0; g.storm.target = 0;
+      const b = frame();
+      // the rain alone: the haze and the sun are put back to the storm's
+      // for the dry frame too, by comparing rain against no rain at level 1
+      let n = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const la = a[i] * 0.3 + a[i + 1] * 0.5 + a[i + 2] * 0.2;
+        const lb = b[i] * 0.3 + b[i + 1] * 0.5 + b[i + 2] * 0.2;
+        if (Math.abs(la - lb) > 6) n++;
+      }
+      return n / (a.length / 4);
+    };
+  });
+  // compare like with like: the storm's own haze would change every pixel,
+  // so the dry frame keeps the storm and hides only the rain
+  await page.evaluate(() => {
+    const g = window.__game, S = g.storm, apply = S.apply.bind(S);
+    S.apply = (game) => {
+      const dry = S.level === 0;
+      if (dry) S.level = 1;
+      apply(game);
+      if (dry) { S.level = 0; S.rain.visible = false; }
+    };
+  });
+  const changed = (from, to) => page.evaluate(([f, t]) => window.__rainChanged(f, t), [from, to]);
+  const open = await changed([-17, 1.9, 24], [-17, 1.2, 0]);
+  const views = await page.evaluate(() => {
+    const g = window.__game, out = [];
+    for (const room of g.world.rooms) {
+      const d = room.doors[0];
+      if (!d) continue;
+      const x = d.x - d.nx * 3, z = d.z - d.nz * 3;
+      const floor = g.world.groundHeight(x, z, 0.12, 2);
+      out.push([[x, floor + 1.6, z], [x - d.nx * 6, floor + 0.9, z - d.nz * 6]]);
+      if (out.length >= 4) break;
+    }
+    return out;
+  });
+  const rooms = [];
+  for (const [from, to] of views) rooms.push(await changed(from, to));
+  await page.evaluate(() => { const g = window.__game; if (g.viewScene) g.viewScene.visible = true; });
+  const pct = (v) => +(v * 100).toFixed(3);
+  r.rainOpen = pct(open);
+  r.rainIndoors = pct(Math.max(...rooms));
+
+  expect(r.schedule.join() === '5,9,13,17', `storms come on waves ${r.schedule.join(', ')}`);
+  expect(/STORM/.test(r.banner), `the wave's banner says ${r.banner}`);
+  expect(r.rose[0] > 0 && r.rose[0] < 1 && r.rose[3] === 1, `the storm rose ${r.rose.join(' → ')} over ten seconds`);
+  expect(r.pureStorm, 'a storm drew on the seeded stream');
+  expect(r.strikes >= 2, `${r.strikes} lightning strikes in a minute of storm`);
+  expect(r.full.fog > 3 && r.full.sun < 0.5 && r.full.sky === 1 && r.full.wind > 3 && r.full.rain,
+    `at full strength: haze ${r.full.fog}x, sun ${r.full.sun}x, sky ${r.full.sky}, wind ${r.full.wind}x, rain ${r.full.rain}`);
+  expect(r.clearDay && !r.inStorm, `a raider 40 m off saw you ${r.clearDay ? '' : 'not '}on a clear day and ${r.inStorm ? '' : 'not '}in the storm`);
+  expect(r.after.level === 0 && r.after.fog === 1 && !r.after.rain, `twelve seconds after the sector cleared: level ${r.after.level}, haze ${r.after.fog}x, rain ${r.after.rain}`);
+  expect(r.rainOpen > 0.3, `rain changed only ${r.rainOpen}% of a frame in the open`);
+  expect(r.rainIndoors < r.rainOpen / 5, `rain changed ${r.rainIndoors}% of a frame inside a shop, against ${r.rainOpen}% in the open`);
+  return r;
+});
+
 check('the air carries the light: shafts from the sun, ash on what faces up, heat over a fire', { weight: 2.6 }, async (page) => {
   // Three things in the air, each a pass that is easy to get quietly wrong.
   // Light shafts are blurred out of the sky round the sun and added in the
@@ -6218,7 +6365,10 @@ check('a stairwell climbs to a roof you can stand on, and a hostile follows you 
         p.reset(sx, sz);
         p.feetY = s.deck; p.position.y = s.deck + p.eyeHeight;
         p.yaw = Math.atan2(-dx, -dz);
-        const wall = w.boxes.find((b) => b.base > s.deck - 0.01 && b.base < s.deck + 0.01 && !b.deck
+        // an edge a gangway leaves from is somewhere to walk on from, not a
+        // wall to walk into (`a gangway crosses the street`)
+        if (w.crossings.some((c) => c.stairs.includes(s) && (c.axis === 'x' ? dx : dz) && Math.abs((c.axis === 'x' ? cz : cx) - c.across) < c.width / 2 + 0.6)) continue;
+        const wall = w.boxes.find((b) => b.base > s.deck - 0.01 && b.base < s.deck + 0.01 && !b.deck && !b.crossing
           && (dx ? (dx > 0 ? b.minX >= r0.maxX - 0.01 : b.maxX <= r0.minX + 0.01) && b.minZ <= cz && b.maxZ >= cz
                  : (dz > 0 ? b.minZ >= r0.maxZ - 0.01 : b.maxZ <= r0.minZ + 0.01) && b.minX <= cx && b.maxX >= cx));
         const party = wall && wall.top - s.deck > 2;
@@ -6333,6 +6483,87 @@ check('a stairwell climbs to a roof you can stand on, and a hostile follows you 
   expect(r.follow.every((f) => f.upAt !== null), `a scavenger never followed the player up: ${JSON.stringify(r.follow)}`);
   expect(r.follow.every((f) => f.downAt !== null), `a scavenger never came back down after the player: ${JSON.stringify(r.follow)}`);
   return { stairs: r.stairs, edges: r.edges, party: r.party, shots: r.shots.length, climbs: `${r.climbs}/${r.rooms}`, follow: r.follow };
+});
+
+check('a gangway crosses the street between two roofs: you walk it end to end, it holds you, and it stops a round', async (page) => {
+  // Two stair roofs facing each other across a street have a plank gangway
+  // between them, over both parapets, with a flight of block steps up to it
+  // on each roof (`crossRoofs` in city.js). This walks every one, end to
+  // end, both ways; pushes into each rail over the street; shoots the deck
+  // from above; and asks which stair a hostile should climb for a player
+  // standing on it, which must be one of the two it joins.
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const w = g.world, p = g.player;
+    const step = (n, each) => { for (let f = 0; f < n; f++) { g.time += 1 / 30; p.health = 100; each?.(f); g.step(1 / 30); } };
+    const out = { crossings: w.crossings.length, walked: 0, stuck: [], held: 0, fell: [], shots: [], led: 0, wrong: [] };
+    const at = (c, along, across = c.across) => (c.axis === 'x' ? [along, across] : [across, along]);
+    const place = (x, z, y) => { p.reset(x, z); p.feetY = p.fallTop = y; p.position.y = y + p.eyeHeight; };
+    for (const c of w.crossings) {
+      for (const [from, to] of [[0, 1], [1, 0]]) {
+        const A = c.ends[from], B = c.ends[to];
+        const [sx, sz] = at(c, A.foot + A.dir * 0.8);
+        place(sx, sz, A.y);
+        const dir = -A.dir;                          // toward the other roof
+        p.yaw = c.axis === 'x' ? Math.atan2(-dir, 0) : Math.atan2(0, -dir);
+        p.pitch = 0;
+        g.input.keys.clear(); g.input.keys.add('KeyW');
+        let low = Infinity, f = 0;
+        const past = () => ((c.axis === 'x' ? p.position.x : p.position.z) - (B.foot + B.dir * 0.6)) * dir >= 0;
+        for (; f < 30 * 20 && !past(); f++) {
+          step(1);
+          const u = c.axis === 'x' ? p.position.x : p.position.z;
+          // over the street: between the two roof edges
+          if ((u - A.edge) * dir > 0.2 && (B.edge - u) * dir > 0.2) low = Math.min(low, p.feetY);
+        }
+        g.input.keys.clear();
+        step(10);
+        const ok = past() && Math.abs(p.feetY - B.y) < 0.05 && Math.abs(low - c.deck) < 0.05;
+        if (ok) out.walked++;
+        else out.stuck.push({ deck: +c.deck.toFixed(2), from: +A.y.toFixed(2), to: +B.y.toFixed(2), feet: +p.feetY.toFixed(2), low: +low.toFixed(2), frames: f });
+      }
+      // the rails: from the middle of the span, walk into each side
+      const mid = (c.ends[0].edge + c.ends[1].edge) / 2;
+      for (const side of [-1, 1]) {
+        const [mx, mz] = at(c, mid);
+        place(mx, mz, c.deck);
+        p.yaw = c.axis === 'x' ? Math.atan2(0, -side) : Math.atan2(-side, 0);
+        g.input.keys.clear(); g.input.keys.add('KeyW'); g.input.keys.add('ShiftLeft');
+        // a run into it — not a jump, which clears a rail as it clears a
+        // roof's street parapet: going over one is something you choose
+        step(60);
+        g.input.keys.clear();
+        step(30);
+        if (Math.abs(p.feetY - c.deck) < 0.05) out.held++;
+        else out.fell.push({ deck: +c.deck.toFixed(2), side, feet: +p.feetY.toFixed(2) });
+      }
+      // a round straight down onto the planks
+      const [mx, mz] = at(c, mid);
+      out.shots.push({ mx, mz, y: c.deck });
+      // and a hostile's question: which stair is the player up
+      const q = w.stairAt(mx, c.deck, mz);
+      if (q && c.stairs.includes(q.stair)) out.led++;
+      else out.wrong.push({ deck: +c.deck.toFixed(2), got: q ? +q.stair.deck.toFixed(2) : null });
+    }
+    return out;
+  });
+  const hits = await page.evaluate(async (shots) => {
+    const THREE = await import('three');
+    const w = window.__game.world;
+    return shots.map(({ mx, mz, y }) => {
+      const hit = new THREE.Raycaster(new THREE.Vector3(mx, y + 6, mz), new THREE.Vector3(0, -1, 0), 0, 50).intersectObjects(w.solids, false)[0];
+      return hit ? +(hit.point.y - y).toFixed(3) : null;
+    });
+  }, r.shots);
+  expect(r.crossings >= 2, `only ${r.crossings} gangways on the seed`);
+  expect(r.walked === r.crossings * 2, `${r.crossings * 2 - r.walked} of ${r.crossings * 2} walks across a gangway did not reach the other roof: ${JSON.stringify(r.stuck)}`);
+  expect(r.held === r.crossings * 2, `${r.crossings * 2 - r.held} of ${r.crossings * 2} pushes into a rail went over it: ${JSON.stringify(r.fell)}`);
+  const missed = hits.filter((h) => h === null || Math.abs(h) > 0.06);
+  expect(missed.length === 0, `${missed.length} of ${hits.length} rounds fired down at a gangway did not stop on it: ${JSON.stringify(hits)}`);
+  expect(r.led === r.crossings, `${r.crossings - r.led} gangways send a hostile to the wrong stair: ${JSON.stringify(r.wrong)}`);
+  return { crossings: r.crossings, walked: r.walked, held: r.held, hits };
 });
 
 check('on a roof, two hostiles cover the stair door and are waiting when you come down', async (page) => {
@@ -7481,6 +7712,87 @@ check('hostiles use the buildings: a frag through the door, posts on the exits, 
   return r;
 });
 
+check('the marksman rifle is bought, not found: on [5], scoped, and one round does what three of the carbine do', async (page) => {
+  // The M110 is the one weapon no wave hands out (`unlock` Infinity). It is
+  // on the armoury's shelf, and buying it puts it on [5], loaded and with its
+  // reserve full. Aimed, the gun goes and the scope's field is the screen.
+  // This buys it, asks [5] for it before and after, aims, measures a round's
+  // damage and aimed spread against the carbine's where the game works them
+  // out, and asks that a new run starts without it.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game;
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const p = g.player, ws = g.weapons, camera = g.camera;
+    const out = {};
+    const slot = () => ws.weapons.findIndex((w) => w.def.id === 'dmr');
+    out.slot = slot();
+    g.input.onKey('Digit5');
+    out.beforeBuy = ws.index;
+    g.score += 5000; g.time += 1 / 30; g.step(1 / 30);
+    g.openArmoury();
+    const s0 = g.scrip;
+    g.armoury.purchase('dmr');
+    out.cost = s0 - g.scrip;
+    g.closeArmoury();
+    const w = ws.weapons[out.slot];
+    out.loaded = [w.mag, w.reserve];
+    g.input.onKey('Digit5');
+    out.afterBuy = ws.index;
+    ws.switching = 0;
+    // aimed, and the HUD brought up to date
+    ws.ads = true; ws.adsT = 1;
+    g.hud.update(g);
+    out.scoped = g.hud.scoped && !document.getElementById('scope').classList.contains('hidden');
+    g.weapons.root.visible = !g.hud.scoped;
+    out.gunHidden = !g.weapons.root.visible;
+    // damage and aimed spread, the carbine against it
+    const dealt = (def) => {
+      const t = g.spawnEnemy('raider');
+      const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+      t.pos.set(camera.position.x + fwd.x * 6, p.feetY, camera.position.z + fwd.z * 6);
+      t.group.position.copy(t.pos); t.group.updateMatrixWorld(true);
+      const aim = new THREE.Vector3(); t.parts.torso.getWorldPosition(aim);
+      let amount = null;
+      t.damage = (a) => { amount = a; return 'hit'; };
+      const solids = g.world.solids; g.world.solids = [];
+      g.hitscan(aim.sub(camera.position).normalize(), def);
+      g.world.solids = solids;
+      g._recycle(t); g.enemies.splice(g.enemies.indexOf(t), 1);
+      return amount;
+    };
+    const spreadOf = (i) => {
+      ws.select(i, g.time); ws.switching = 0; ws.reloading = false; ws.nextShot = 0;
+      ws.adsT = 1; ws.current.mag = 5;
+      let dir = null;
+      const hs = g.hitscan; g.hitscan = (d) => { dir = d.clone(); };
+      const rnd = Math.random; Math.random = () => 1;
+      ws.fire(g.time, camera, false);
+      Math.random = rnd; g.hitscan = hs;
+      const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+      return dir ? dir.angleTo(fwd) : null;
+    };
+    const carbine = ws.weapons.findIndex((x) => x.def.id === 'rifle');
+    ws.weapons[carbine].unlocked = true;
+    out.damage = { dmr: dealt(w.def), carbine: dealt(ws.weapons[carbine].def) };
+    out.spread = { dmr: spreadOf(out.slot), carbine: spreadOf(carbine) };
+    g.startRun();
+    out.nextRun = ws.weapons[out.slot].unlocked;
+    return out;
+  });
+  expect(r.slot === 4, `the marksman rifle is slot ${r.slot + 1}, not 5`);
+  expect(r.beforeBuy !== r.slot, '[5] drew the marksman rifle before it was bought');
+  expect(r.cost === 3000, `it cost ${r.cost} scrip, not 3000`);
+  expect(r.afterBuy === r.slot, `[5] did not draw the rifle once bought (holding slot ${r.afterBuy + 1})`);
+  expect(r.loaded[0] === 10 && r.loaded[1] === 80, `bought, it holds ${r.loaded.join('/')}, not 10/80`);
+  expect(r.scoped && r.gunHidden, `aimed, the scope is ${r.scoped ? 'up' : 'not up'} and the gun ${r.gunHidden ? 'hidden' : 'still drawn'}`);
+  expect(r.damage.dmr >= r.damage.carbine * 2.5, `a round does ${r.damage.dmr}, against the carbine's ${r.damage.carbine}`);
+  expect(r.spread.dmr < r.spread.carbine * 0.25, `aimed, it strays ${r.spread.dmr}, against the carbine's ${r.spread.carbine}`);
+  expect(r.nextRun === false, 'a new run starts with the marksman rifle still owned');
+  return r;
+});
+
 check('the armoury opens between waves, costs scrip not score, and what it fits is what the game does', async (page) => {
   // Between waves the armoury sells armour, bigger magazines, optics, match
   // ammunition, a frag pouch, a resupply and a dressing. Paid in scrip,
@@ -7610,7 +7922,7 @@ check('the armoury opens between waves, costs scrip not score, and what it fits 
   expect(Math.abs(ratio(r.after.spread, r.before.spread) - 0.7) < 0.01, `optics took aimed spread from ${r.before.spread} to ${r.after.spread}`);
   expect(Math.abs(ratio(r.after.dealt, r.before.dealt) - 1.12) < 0.005, `match ammunition took a hit from ${r.before.dealt} to ${r.after.dealt}`);
   expect(r.unaffordable === 'refused' && r.broke > 0, `with ${r.broke} items out of reach a purchase was ${r.unaffordable}`);
-  expect(r.closed === 'playing' && r.fresh === '{"armour":0,"mags":0,"optics":0,"rifling":0,"pouch":0} 0', `after deploying: ${r.closed}, and a new run starts with ${r.fresh}`);
+  expect(r.closed === 'playing' && r.fresh === '{"armour":0,"mags":0,"optics":0,"rifling":0,"pouch":0,"dmr":0} 0', `after deploying: ${r.closed}, and a new run starts with ${r.fresh}`);
   return { bought: r.bought, before: r.before, after: r.after };
 });
 
@@ -7819,10 +8131,17 @@ check('a seed still lays out the city it did', { warm: true, weight: 3.6 }, asyn
   // crate may stand free. Before it: 7576/2774 '252600ea' (7040 '25801dfc')
   // -1299344873, 6877/2696 '10471050' (6435 '311f203e') -98700018,
   // 6701/2692 'ee9d8a82' (6318 '5c4a4264') 979169931.
+  //
+  // And gangways between neighbouring stair roofs (`crossRoofs`): a deck,
+  // two rails and a flight of steps at each end, every piece a collider
+  // flagged `crossing` and left out of the prints, built after the perches
+  // in a `reserve` with materials `unbilled`. Every print, perch and mark is
+  // what it was; the counts are the gangways. Before them: 9766/3499,
+  // 10011/3773, 11807/4141.
   const want = {
-    1: { boxes: 9766, solids: 3499, perches: 32, fp: 'af1891e0', placed: 9230, fpPlaced: '171519ec', mark: -1376937285 },
-    7: { boxes: 10011, solids: 3773, perches: 26, fp: '77a53d6b', placed: 9556, fpPlaced: 'd0d75eb8', mark: 424323334 },
-    20260101: { boxes: 11807, solids: 4141, perches: 17, fp: 'da9f2fd9', placed: 11409, fpPlaced: '5ae5df2e', mark: -1688204973 },
+    1: { boxes: 9817, solids: 3505, perches: 32, fp: 'af1891e0', placed: 9230, fpPlaced: '171519ec', mark: -1376937285 },
+    7: { boxes: 10077, solids: 3782, perches: 26, fp: '77a53d6b', placed: 9556, fpPlaced: 'd0d75eb8', mark: 424323334 },
+    20260101: { boxes: 11896, solids: 4153, perches: 17, fp: 'da9f2fd9', placed: 11409, fpPlaced: '5ae5df2e', mark: -1688204973 },
   };
   // `mark` is where the seeded stream stands at the end of boot, which is
   // the stream every spawn is picked from. Every pass that changed how
@@ -8698,6 +9017,120 @@ check('the bake darkens the ground the city stands on', { reads: true }, async (
   expect(r.near < r.open * 0.82,
     `ground beside a wall (${r.near}) is not darker than open street (${r.open})`);
   expect(r.open > 0.85, `open street is darkened to ${r.open} with nothing standing on it`);
+  return r;
+});
+
+check('a controller plays the game: sticks walk and look, triggers fire, buttons do what their keys do', { weight: 1.2 }, async (page) => {
+  // A controller is read once a frame (`Input.pollPad`) and turned into the
+  // things the keyboard and mouse already drive: each button is its key, the
+  // triggers the mouse buttons, the left stick a walk with a how-far, the
+  // right a turn rate. A fake standard pad stands in for one here, and the
+  // mouse is never captured, because a pad needs no capture.
+  const r = await page.evaluate(() => {
+    const g = window.__game;
+    const toasts = [];
+    const toast = g.hud.toast.bind(g.hud);
+    g.hud.toast = (t) => { toasts.push(t); toast(t); };
+    g.startRun();
+    g.startWave = () => {};
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const pad = {
+      id: 'fake', connected: true, mapping: 'standard', axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+    };
+    let plugged = true;
+    navigator.getGamepads = () => (plugged ? [pad] : []);
+    const press = (i, on = true) => { pad.buttons[i].pressed = on; pad.buttons[i].value = on ? 1 : 0; };
+    const tick = (s = 1 / 60) => {
+      for (let i = 0; i < Math.round(s * 60); i++) {
+        g.input.pollPad();
+        g.time += 1 / 60;
+        if (g.state === 'playing') g.step(1 / 60);
+        g.input.endFrame();
+      }
+    };
+    // stand somewhere with room to walk
+    // on a firing line: twenty metres of clear ground straight ahead
+    const { target: spot, px, pz } = window.__place(20);
+    g.player.reset(spot.x, spot.z);
+    const ahead = Math.atan2(-(px - spot.x), -(pz - spot.z));
+    tick(0.5);
+    const connected = toasts.includes('CONTROLLER CONNECTED');
+    const P = g.player;
+
+    // a full push walks, half a push walks at about half the pace
+    const walk = (y) => {
+      const x0 = P.position.x, z0 = P.position.z;
+      pad.axes[1] = y; tick(1.5); pad.axes[1] = 0; tick(0.5);
+      return Math.hypot(P.position.x - x0, P.position.z - z0);
+    };
+    P.yaw = ahead;
+    const full = walk(-1);
+    P.yaw = ahead + Math.PI;
+    const half = walk(-0.59);
+
+    // the right stick turns
+    const yaw0 = P.yaw;
+    pad.axes[2] = 1; tick(0.5); pad.axes[2] = 0; tick(1 / 60);
+    const turned = yaw0 - P.yaw;
+
+    // the right trigger fires, the left aims
+    g.weapons.select(1, g.time); tick(1);
+    const shots0 = g.shotsFired;
+    press(6); press(7); tick(0.5);
+    const aiming = g.input.aim;
+    press(7, false); press(6, false); tick(1 / 60);
+    const fired = g.shotsFired - shots0;
+    const released = !g.input.fire && !g.input.aim;
+
+    // X reloads, Y takes the next weapon, A jumps
+    press(2); tick(1 / 60); press(2, false);
+    const reloading = g.weapons.reloading;
+    tick(3);
+    const before = g.weapons.index;
+    press(3); tick(1 / 60); press(3, false); tick(1);
+    const cycled = g.weapons.index !== before;
+    const feet = P.feetY;
+    press(0); tick(0.25);
+    const jumped = P.feetY - feet;
+    press(0, false); tick(1.5);
+
+    // the menu button pauses, and A presses RESUME
+    press(9); tick(1 / 60); press(9, false); tick(1 / 60);
+    const paused = g.state;
+    press(0); tick(1 / 60); press(0, false); tick(1 / 60);
+    const resumed = g.state;
+
+    // pulled out mid-push, nothing is left held
+    pad.axes[1] = -1; press(1); tick(0.2);
+    plugged = false; tick(0.2);
+    const left = { keys: [...g.input.keys], move: g.input.pad.move.length() };
+
+    // and in play it is the game's own frame that reads it
+    plugged = true; pad.axes[1] = 0; press(1, false); tick(0.1);
+    const render = g.render;
+    g.render = () => {};
+    press(9); g.frame(); press(9, false); g.frame();
+    g.render = render;
+    const framePaused = g.state;
+    return { framePaused,
+      connected, captured: g.input.locked, full: +full.toFixed(2), half: +half.toFixed(2),
+      turned: +turned.toFixed(2), fired, aiming, released, reloading, cycled,
+      jumped: +jumped.toFixed(2), paused, resumed, left,
+    };
+  });
+  expect(r.connected, 'no word that a controller connected');
+  expect(!r.captured, 'the mouse was captured, so this did not test a pad without it');
+  expect(r.full > 5, `a full push of the left stick walked ${r.full} m in 1.5 s`);
+  expect(r.half > r.full * 0.3 && r.half < r.full * 0.7, `half a push walked ${r.half} m against ${r.full}`);
+  expect(r.turned > 1, `the right stick turned ${r.turned} rad in half a second`);
+  expect(r.aiming && r.fired >= 3 && r.released, `the triggers: aimed ${r.aiming}, fired ${r.fired}, let go ${r.released}`);
+  expect(r.reloading, 'X did not reload');
+  expect(r.cycled, 'Y did not take the next weapon');
+  expect(r.jumped > 0.3, `A jumped ${r.jumped} m`);
+  expect(r.paused === 'paused' && r.resumed === 'playing', `the menu button left the game ${r.paused}, and A ${r.resumed}`);
+  expect(r.framePaused === 'paused', `the game's frame did not read the pad: ${r.framePaused}`);
+  expect(r.left.keys.length === 0 && r.left.move === 0, `pulled out, the pad left ${r.left.keys.join(', ')} held and a walk of ${r.left.move}`);
   return r;
 });
 
