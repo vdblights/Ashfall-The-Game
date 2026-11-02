@@ -74,6 +74,7 @@ export class World {
      * from the floor outside its door to the roof outside the bulkhead's.
      */
     this.stairs = [];
+    this.crossings = [];   // gangways between two stair roofs (`crossRoofs` in city.js)
     /**
      * The floors of a stairwell's building between its ground floor and its
      * roof, one a lap of the stair: footprint, floor and ceiling heights,
@@ -288,6 +289,15 @@ export class World {
         if (d < best) { best = d; idx = i; }
       }
       return { stair: s, idx };
+    }
+    // on a gangway between two roofs: the roof at its nearer end, so a
+    // hostile goes up that stair rather than to the street under it
+    for (const c of this.crossings) {
+      if (x < c.minX - 0.4 || x > c.maxX + 0.4 || z < c.minZ - 0.4 || z > c.maxZ + 0.4 || y < c.deck - 0.8) continue;
+      const u = c.axis === 'x' ? x : z;
+      const [a, b] = c.stairs;
+      const s = Math.abs(u - c.ends[0].edge) <= Math.abs(u - c.ends[1].edge) ? a : b;
+      return { stair: s, idx: s.path.length - 1, crossing: c };
     }
     return null;
   }

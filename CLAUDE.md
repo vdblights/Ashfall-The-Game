@@ -78,6 +78,7 @@ builds, never to play.
 | `src/loot.js` | Where the caches in the buildings lie and what each holds, by a hash of the city |
 | `src/grenades.js` | Fuse, flight, bounce, detonation |
 | `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
+| `src/storm.js` | Storm waves: which waves bring one, the rain, the wind, the haze and the lightning, and how far a hostile sees in it |
 | `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
 | `src/textures.js` | Every texture, painted to canvas at boot |
@@ -1037,6 +1038,90 @@ These each cost real debugging time. Changing them needs a reason.
   ignores walls (2 of 2 kept pushing) and an eye that drops at once (0.42 m in a frame); `a lean puts
   the head round a corner` fails with hostiles reading the body (0 of 2 leaning heads shot), the
   lean unclamped (6 of 6 heads in the wall) and Q cycling on the key going down (a tap cycles twice, a hold once).
+- **A gangway is the city, hung on it last.** Where two stair roofs face
+  each other across a street within 14 m and 2.6 m of height (`crossRoofs`
+  in `city.js`), a plank deck on steel crosses at a little over the higher
+  parapet, railed both sides, with a flight of block steps up to it on each
+  roof; at most two a roof, the shortest gaps first, never across a party
+  wall. Every piece is a collider — the steps and the deck decks, the rails
+  ceilings a rail's height over the deck, so a body is held and a round
+  goes over or under — and it is laid by a hash of where the roofs are,
+  after the doors, in a `reserve`, in materials the city already wears and
+  `unbilled`. So nothing placed before it can lean on it and the stream
+  never sees it: every print, perch and mark is what it was, and only the
+  counts in the layout check moved (51, 66 and 89 boxes on the pinned
+  seeds). Its boxes carry `crossing`, which the prints leave out as they
+  leave the doors, and the stairwell check's roof-edge walks skip the edge
+  a gangway leaves from. **On a gangway `World.stairAt` answers the stair of
+  the nearer roof** (`crossings`), so a hostile following you across goes up
+  the stair of the roof you are walking toward, not to the street under you.
+  `a gangway crosses the street between two roofs` walks every one both
+  ways, pushes into both rails from the middle, shoots across it and
+  under it, and asks `stairAt` along it. Drop ladders were offered with
+  them and not built: a stairwell building has windows in every face, so
+  there is no blank wall on one to hang a ladder from.
+- **A scope is looked through.** The M110 (`dmr`, slot 5) is bought in the
+  armoury for 3,000 scrip and never found; the armoury's `dmr` item unlocks
+  it and fills it. It is the carbine's receiver with a heavier barrel, a
+  straight magazine and a scope (`buildRifle({ marksman: true })`, `scope`
+  in `weapons.js`), sharing the carbine's grip and shooting hand so no
+  finger moved. Its def carries `scope`, and once the aim is settled
+  (`adsT` over 0.85, not switching, not reloading) the HUD shows the
+  reticle and its black surround (`hud.scoped`) and `frame` hides the view
+  model, because the gun's own optic at 0.36 of the field of view is a
+  tube a few pixels across. `the marksman rifle is bought, not found`
+  buys it, selects it on `5`, settles the aim and measures a round
+  against the carbine's.
+- **A storm is uniforms and one reader.** The fifth wave and every fourth
+  after it (`stormFor`) comes in under weather, which `Storm` in
+  `storm.js` raises over `STORM.ramp` seconds from `startWave` and lets
+  down once the sector is clear. Everything it changes is set each frame
+  from a base (`apply`): fog density from `fogBase`, the sun from
+  `sunBase`, the hemisphere from `hemiBase` (which `applyQuality` keeps,
+  because low's is ten times high's, and lightning is a share of it), the
+  sky's `storm` uniform (more cover, darker), the wind on the ash, smoke
+  and embers, and the rain's `level` — so it compiles nothing, a paused
+  game is still, and the low tier's Lambert twins see it as well. Three
+  things are load-bearing. **The extra wind is integrated, not
+  multiplied**: the ash places a flake at `wind * time`, so changing the
+  wind would throw every flake across the box in a frame; the storm adds
+  what it carries past the usual to `drift`, which the ash (`gust`) and
+  the rain read as an offset. **Rain is kept out of rooms by the ash's
+  roof map**, read in the rain's vertex shader the same way, or it fell
+  through every ceiling. And **the one reader is sight**: `game.sight`
+  (`storm.sight`, set at the top of `step`) scales `detect` where an
+  `Enemy` asks whether it sees you and where a ranged one asks whether you
+  are in range, so a marksman is half blind in a storm and you can close
+  on it. Nothing draws on `Math.random`: lightning is timed off a hash of
+  the wave and the strike, the rain is placed off a hash per streak, and
+  the rain and thunder play the noise the audio already paints on its own generator. The
+  rain is built hidden at boot inside a `reserve`, so `precompileStages`
+  compiles it with everything else. `a storm wave brings rain and wind,
+  halves how far anything sees, and clears with the sector` fails with
+  the sight factor left out (a raider 40 m off sees you in the storm),
+  the roof test taken out (rain changes 3.28% of a frame inside a shop,
+  against 0.51%), and `Math.random` in the lightning.
+- **A controller is a keyboard with two sticks.** `Input.pollPad` in
+  `player.js` reads the first gamepad with the standard mapping once a
+  frame, from `frame` before the steps, as the mouse is read. Every
+  button is a key code (`PAD_KEYS`) added to and taken out of `keys`
+  through `onKey`/`onKeyUp`, so a button does exactly what its key does,
+  tap and hold alike, and nothing downstream knows about controllers. The
+  triggers are the mouse buttons, changed only when they change, so a
+  semi-automatic still wants a fresh pull. Four buttons are not keys:
+  `Y` cycles (as the wheel), a left-stick click latches a sprint until the
+  stick comes to rest, and View and Menu go to `onPadPress`, which `main.js`
+  turns into the armoury, pause and whichever button a screen is showing —
+  View was a key once (`B`), and opening and closing the armoury in one
+  poll is why it is not. The left stick is how far as well as which way:
+  `Player.update` adds it to the keys and walks at `min(1, |input|)` of
+  the speed, so half a push is half the pace. The right stick is a turn
+  rate, squared past a dead zone. A pad that goes away lets go of all it
+  held (`_padLost`). `a controller plays the game` fakes
+  `navigator.getGamepads` and walks a full and a half push along a firing
+  line (7.8 m against 3.9), turns, fires on the trigger and presses Start;
+  it fails with no analog push, no look, triggers not read, and no poll in
+  `frame`.
 - **Line of sight must stay symmetric.** It is a three-slab segment test. An
   earlier version only checked height at the entry point, which let a hostile
   see a target that could not see it back.
@@ -2721,6 +2806,17 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the wet streets was four of eight ideas offered, taken
+together: gangways between roofs, a marksman rifle to buy, storm waves and
+a controller. Each is an invariant above. Two things worth keeping. A
+storm is a factor on every light and fog in the frame, and each of those
+already had an owner — `applyQuality` sets the hemisphere per tier, the
+lightning wants a share of it — so the storm reads bases the owners keep
+(`fogBase`, `sunBase`, `hemiBase`) rather than its own copies, or a tier
+change mid-storm would have undone it. And a check of a controller has to
+walk along a firing line: walked straight ahead from the insertion point,
+the full push met a wall at 3.9 m and read as the half push.
 
 The pass after the air was two of four looks offered: wet streets that
 mirror the sky and the fire, and weathered facades. Both are invariants

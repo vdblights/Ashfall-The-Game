@@ -42,6 +42,8 @@ export const ITEMS = [
     what: ['12% more damage from every weapon', '25% more damage'] },
   { id: 'pouch', name: 'FRAG POUCH', cost: [800, 1600],
     what: ['Carry one more grenade, and fill up', 'Carry another, and fill up'] },
+  { id: 'dmr', name: 'M110 MARKSMAN RIFLE', cost: [3000],
+    what: ['A scoped semi-auto on [5]: 75 a round, ten to a magazine'] },
   { id: 'resupply', name: 'RESUPPLY', cost: [600], repeat: true,
     what: ['Every weapon to full ammunition, and two frags'] },
   { id: 'medkit', name: 'FIELD DRESSING', cost: [500], repeat: true,
@@ -50,7 +52,7 @@ export const ITEMS = [
 
 /** A fresh run's kit: no tiers of anything. */
 export function freshKit() {
-  return { armour: 0, mags: 0, optics: 0, rifling: 0, pouch: 0 };
+  return { armour: 0, mags: 0, optics: 0, rifling: 0, pouch: 0, dmr: 0 };
 }
 
 /** What the next purchase of an item costs, or null when it is maxed out. */
@@ -82,6 +84,14 @@ export function buy(game, id) {
     for (const w of game.weapons.weapons) if (w.unlocked) w.reserve = w.def.maxReserve;
   }
   if (id === 'medkit') game.player.health = game.player.maxHealth;
+  // the marksman rifle is never handed out by a wave: owning it is buying
+  // it, and it comes loaded with its full reserve
+  if (id === 'dmr') {
+    const w = game.weapons.weapons.find((x) => x.def.id === 'dmr');
+    w.unlocked = true;
+    w.mag = game.weapons.magSize(w);
+    w.reserve = w.def.maxReserve;
+  }
   return true;
 }
 

@@ -92,6 +92,11 @@ export const RADIO = {
     'More of them, WREN.', 'Another push coming in.', 'They are not running out of people.',
     'Contacts on three streets.', 'Here they come again.',
   ],
+  storm: [
+    'Weather is coming in over Carrow. You will lose the far end of every street, WREN, and so will they.',
+    'Storm front on top of you. Their marksmen are half blind in this. So are you.',
+    'Rain again. Close the distance; nothing is hitting anything at range tonight.',
+  ],
   clear: [
     'Street is quiet. Breathe. The armoury is open if you have the scrip.',
     'That is the wave. Rearm while you can.',

@@ -395,7 +395,64 @@ class Audio {
     this.wind = { src, lfo };
   }
 
+  /**
+   * Rain on the city, as loud as the storm is strong (0..1). A bed of hiss
+   * high and a patter low, built on first use and then only turned up and
+   * down; nothing is placed, because rain comes from everywhere at once.
+   */
+  rain(level) {
+    if (!this.ctx) return;
+    if (!this.rainBed) {
+      if (level <= 0) return;
+      const ctx = this.ctx;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      g.connect(this.master);
+      const srcs = [];
+      for (const [type, f, q, gain] of [['highpass', 2600, 0.5, 0.11], ['bandpass', 900, 0.7, 0.07]]) {
+        const src = ctx.createBufferSource();
+        src.buffer = this.noiseBuf;
+        src.loop = true;
+        const flt = ctx.createBiquadFilter();
+        flt.type = type;
+        flt.frequency.value = f;
+        flt.Q.value = q;
+        const v = ctx.createGain();
+        v.gain.value = gain;
+        src.connect(flt); flt.connect(v); v.connect(g);
+        src.start(0, type === 'bandpass' ? 0.9 : 0);
+        srcs.push(src);
+      }
+      this.rainBed = { g, srcs };
+    }
+    this.rainBed.g.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4);
+  }
+
+  /** Thunder, `delay` seconds after the flash, a rumble that rolls away. */
+  thunder(gain = 1, delay = 1) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime + delay;
+    for (const [f, len, amp, at] of [[260, 0.5, 0.5, 0], [140, 3.2, 0.45, 0.08], [70, 4.5, 0.4, 0.3]]) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const flt = ctx.createBiquadFilter();
+      flt.type = 'lowpass';
+      flt.frequency.setValueAtTime(f, t0 + at);
+      flt.frequency.exponentialRampToValueAtTime(f * 0.4, t0 + at + len);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(amp * gain, t0 + at + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+      src.connect(flt); flt.connect(g); g.connect(this.master);
+      src.start(t0 + at, (f % 7) * 0.2);
+      src.stop(t0 + at + len + 0.1);
+    }
+  }
+
   stopAmbience() {
+    if (this.rainBed) this.rainBed.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2);
     if (!this.wind) return;
     try { this.wind.src.stop(); this.wind.lfo.stop(); } catch { /* already stopped */ }
     this.wind = null;

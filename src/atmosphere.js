@@ -255,6 +255,7 @@ const CLOUD_GLSL = /* glsl */`
                mix(cloudHash(i + vec2(0.0, 1.0)), cloudHash(i + vec2(1.0, 1.0)), u.x), u.y);
   }
   uniform float cloudLow;     // 1 on the low tier: fewer octaves, same shapes
+  uniform float storm;        // 0 clear .. 1 a storm wave's lid of cloud
   float cloudFbm(vec2 p, int octaves) {
     float v = 0.0, a = 0.5;
     for (int k = 0; k < 5; k++) {
@@ -269,7 +270,7 @@ const CLOUD_GLSL = /* glsl */`
   // caller works out once: the self-shadow sample below reuses it, which is
   // nine noise lookups a sky pixel saved for no visible difference
   float cloudCover(vec2 p, vec2 warp, int octaves) {
-    return smoothstep(0.52, 0.74, cloudFbm(p + warp * 1.4, octaves));
+    return smoothstep(0.52 - 0.42 * storm, 0.74 - 0.3 * storm, cloudFbm(p + warp * 1.4, octaves));
   }
 
   vec3 ashClouds(vec3 d, vec3 sky) {
@@ -294,7 +295,8 @@ const CLOUD_GLSL = /* glsl */`
     // a little cooler, so the shadowed side keeps the sky's value and hue.
     vec3 belly = sky * vec3(0.66, 0.64, 0.70) + vec3(0.012, 0.011, 0.013);
     vec3 sunlit = vec3(0.78, 0.47, 0.27);              // the light's own gold, at dusk
-    vec3 col = mix(belly, max(sunlit, sky), lit * lit);
+    vec3 col = mix(belly, max(sunlit, sky), lit * lit * (1.0 - 0.8 * storm));
+    col *= 1.0 - 0.45 * storm;
 
     // thin cloud near the sun lets the glow through: a bright rim, not a hole
     float mu = dot(d, ASH_SUN);
@@ -304,7 +306,7 @@ const CLOUD_GLSL = /* glsl */`
 
     // edge-on toward the horizon the layer is lost in the haze
     float fade = smoothstep(0.03, 0.22, d.y);
-    return mix(sky, col, cover * 0.92 * fade);
+    return mix(sky, col, cover * mix(0.92, 0.98, storm) * fade);
   }
 `;
 
@@ -335,7 +337,7 @@ const SKY_FRAG = /* glsl */`
 /** The dome's material. `disc` is 0 when the dome is rendered into the environment. */
 export function skyMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: { disc: { value: 1 }, cloudLow: { value: 0 } },
+    uniforms: { disc: { value: 1 }, cloudLow: { value: 0 }, storm: { value: 0 } },
     vertexShader: SKY_VERT,
     fragmentShader: SKY_FRAG,
     side: THREE.BackSide,

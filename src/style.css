@@ -46,6 +46,21 @@ html, body {
   margin: -20px 0 0 -20px;
   transition: opacity 0.12s;
 }
+/* the marksman rifle's scope, once the aim has settled: the round field of
+   the eyepiece, black past its edge, and a fine duplex reticle */
+#scope {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, transparent 0, transparent 33vmin, rgba(0, 0, 0, 0.55) 33.6vmin, #000 35vmin);
+}
+#scope .sc-h, #scope .sc-v { position: absolute; left: 50%; top: 50%; background: rgba(0, 0, 0, 0.85); }
+#scope .sc-h { width: 70vmin; height: 1px; margin: 0 0 0 -35vmin;
+  background: linear-gradient(90deg, #000 0 40%, rgba(0,0,0,0.8) 40% 60%, #000 60%); }
+#scope .sc-v { height: 70vmin; width: 1px; margin: -35vmin 0 0 0;
+  background: linear-gradient(180deg, #000 0 40%, rgba(0,0,0,0.8) 40% 60%, #000 60%); }
+#scope .sc-h::after, #scope .sc-v::after { content: ''; position: absolute; background: #000; }
+#scope .sc-h::after { left: 0; right: 60%; top: -1px; height: 3px; }
+#scope .sc-v::after { top: 60%; bottom: 0; left: -1px; width: 3px; }
+
 /* aiming down sights: drop the ticks, keep a fine centre dot */
 #crosshair.hidden-ads .ch { opacity: 0; }
 #crosshair.hidden-ads .ch-dot { background: rgba(255, 70, 50, 0.95); box-shadow: 0 0 4px rgba(255, 60, 40, 0.9); }

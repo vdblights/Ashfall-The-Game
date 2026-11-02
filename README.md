@@ -147,7 +147,7 @@ scale had no initial value.
 | Left mouse | Fire |
 | Right mouse | Aim down sights |
 | `R` | Reload |
-| `1`–`4`, `Q` (tap), mouse wheel | Switch weapons |
+| `1`–`5`, `Q` (tap), mouse wheel | Switch weapons |
 | `Q` / `E` (hold) | Lean left / right round a corner |
 | `G` | Frag grenade — **hold to cook**, release to throw |
 | `F` / `V` | Melee bash |
@@ -156,6 +156,24 @@ scale had no initial value.
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
 | `Esc` | Pause |
+
+A controller plays too, with the standard layout any browser reads from an
+Xbox or PlayStation pad:
+
+| Controller | Action |
+| --- | --- |
+| Left stick | Move, as fast as it is pushed; click it to sprint |
+| Right stick | Look |
+| Right trigger / left trigger | Fire / aim |
+| A / B / X / Y | Jump and mantle / crouch and slide / reload / next weapon |
+| Right bumper / left bumper | Melee / frag (hold to cook) |
+| D-pad left / right | Lean (hold), or tap to switch weapon / work a door |
+| D-pad up / down | Marksman rifle / mute |
+| View | Armoury, between waves |
+| Menu | Pause; A or Menu presses the button on any screen |
+
+Each button is the key it names, pressed and released, so it does exactly
+what the key does. A controller needs no pointer lock.
 
 Click the canvas to capture the mouse — with pointer lock held, the cursor
 physically cannot leave the window, and losing it pauses the game. The
@@ -178,6 +196,7 @@ page in its own tab, where capture works.
 | 2 | MP5K SMG | 880 rpm, wide spread, best inside a room |
 | 3 | M4A1 carbine | Recovered on wave 2 — the reliable mid-range answer |
 | 4 | M1014 breacher | Recovered on wave 3 — nine pellets, heavy damage falloff |
+| 5 | M110 marksman rifle | Bought in the armoury — ten rounds, semi-auto, a scope that fills the screen when you aim |
 
 Every weapon has its own recoil pattern, spread (which tightens when you aim or
 crouch and opens when you move), reload timing and ADS zoom. Headshots do
@@ -310,10 +329,22 @@ waits while you shop. It sells:
 | Frag pouch | 2 | One more grenade carried each, and the pouch filled |
 | Resupply | — | Every weapon to full ammunition, and two frags |
 | Field dressing | — | Back to full health |
+| M110 marksman rifle | — | A scoped rifle on `5`: one body shot drops a scavenger, one to the head drops most things |
 
 It is paid for in scrip, which every point you score earns and which shows
 under your score. Spending it costs no score, so buying armour is never a
 choice between surviving and your best score. What you fit lasts the run.
+
+## Storms
+
+The fifth wave, and every fourth after it, comes in under a storm. Rain
+drives across the sector on a wind three times the usual, the haze thickens
+until the far end of a street is gone, the sun goes behind cloud, and now
+and then lightning lights the city and the thunder follows. It cuts both
+ways: a hostile sees half as far as it does on a clear day, so its
+marksmen lose most of their reach, and so do you. The storm builds over the
+first seconds of its wave and clears when the sector does. Rain does not
+fall inside a building.
 
 ## The operation
 
@@ -681,6 +712,13 @@ it that would hide it crouched and not standing, it kneels behind it to
 reload and stays there. And gunfire too far off to bring a hostile running
 still carries: an unalerted one in the ring beyond turns its head toward the
 shot.
+
+Some stair roofs stand close enough to a neighbour to be bridged, and are:
+a gangway of planks on a steel frame, railed both sides, with a short
+flight of steps at each end where the two roofs stand at different
+heights. Cross the street without coming down to it. Hostiles follow you
+across, and a hostile following you up a stair takes the stair of the roof
+you are on, not the one you crossed from.
 
 The same rules apply to everyone: hostiles climb, stand on, and fall off the
 same surfaces, and a melee rusher cannot reach you across a height gap too

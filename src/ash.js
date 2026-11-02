@@ -66,6 +66,7 @@ const ASH_VERT = /* glsl */`
   uniform float time;
   uniform float scale;            // pixels per metre at one metre
   uniform vec2 wind;
+  uniform vec2 gust;              // how much further a storm's wind has carried it
   uniform sampler2D roofs;
   uniform float roofReach;
   varying float vAlpha;
@@ -79,7 +80,7 @@ const ASH_VERT = /* glsl */`
     // ash is light: it falls at well under a metre a second and the wind
     // carries it further sideways than down
     float fall = 0.35 + 0.4 * fract(seed.w * 7.13);
-    vec3 drift = vec3(wind.x, -fall, wind.y) * time;
+    vec3 drift = vec3(${WIND.x.toFixed(4)}, -fall, ${WIND.y.toFixed(4)}) * time + vec3(gust.x, 0.0, gust.y);
     drift.x += sin(time * 0.7 + ph) * 0.45;
     drift.z += cos(time * 0.53 + ph * 1.7) * 0.45;
     drift.y += sin(time * 1.1 + ph * 2.3) * 0.12;
@@ -423,7 +424,7 @@ export class Ashfall {
     this.roofs = roofMap(world, outskirts);
     this.ashMat = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([fog, {
-        time: { value: 0 }, scale: { value: 600 }, wind: { value: WIND.clone() },
+        time: { value: 0 }, scale: { value: 600 }, wind: { value: WIND.clone() }, gust: { value: new THREE.Vector2() },
         roofs: { value: null }, roofReach: { value: MAP_REACH },
         lit: { value: new THREE.Color(0.05, 0.047, 0.044) },
         shade: { value: new THREE.Color(0.014, 0.0135, 0.013) },
