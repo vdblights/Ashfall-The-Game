@@ -1311,6 +1311,44 @@ These each cost real debugging time. Changing them needs a reason.
   off moves shadow edges without moving how much of the frame is lit. Both
   boxes are snapped to whole texels in the light's frame, so an edge only
   moves when the thing casting it does.
+- **The sun keeps the city's shadow and draws only what moves into it.**
+  The sun's map is 2,048 texels over 110 m and three redrew every static
+  batch into it every frame, a quarter of the frame's draw calls and a
+  third of its triangles, for a picture that only changes when the box
+  moves a texel. `ShadowCache` in `shadows.js`, wrapped round three's
+  `shadowMap.render` by `cacheShadows` in `main.js`, draws the city once
+  into a map a margin wider (size/16 texels a side) and each frame copies
+  the window the box covers with `blitFramebuffer`, colour and depth, then
+  runs three's own pass for everything not in the city over it, with the
+  clear suppressed. Five things are load-bearing. **The copy is exact
+  because the box is snapped**: the window is a whole-texel offset, and
+  the cache is drawn with three's pass, its camera only widened. **Depth
+  has slack**: the box's depth along the sun moves as you walk, so the
+  cache is drawn 12 m further back than it needs and the far plane is 24 m
+  longer (`DEPTH_SLACK`), with the bias scaled so it is the same in metres,
+  and a new cache is due once the depth is in the outer sixth of that.
+  **A new cache is drawn a quarter a frame** into a second buffer, from
+  half the margin used, and swapped in whole; only a jump past the margin
+  draws one at once. **The light is put back after the pass**: it is aimed
+  at the cache's depth only while the pass draws, or a frame drawn again
+  without a step — a paused one — read the aimed depth back as the box's,
+  re-centred, and rebuilt the cache every frame. **A fire barrel is not
+  cached** (`userData.unbaked`): it is left out of the merge to be shown
+  burst, and a cached drum cast a whole drum's shadow over its stump. Doors,
+  panes, hostiles and drops are not in `g.city` and are drawn every frame
+  anyway. Anything added to the city that moves must be marked the same
+  way or its shadow freezes. The near cascade is not cached: it is 13 m
+  across and follows the view, and its margin would cost more than it
+  saves. `the sun keeps the city's shadow` compares the cached map with the
+  one drawn whole at rest, after a walk that swaps caches a tile at a time,
+  and after blowing every drum in the box, and asks a frame drawn four
+  times not to move the cache. It fails with the copy taken out, with the
+  copy's offset flipped, with the light left aimed, and with the drums
+  cached. What it does not reach is about 0.016% of texels, all depth ties
+  between surfaces drawn over one another, which two views with different
+  cameras round differently: 0-35 pixels of 921,600 in the frame, no more
+  than 18 levels in any channel. What it costs is video memory: two caches
+  of 2,304² colour and depth on high, about 85 MB, and 21 MB on medium.
 - **Hit detection raycasts before the renderer runs**, so `Enemy.update` calls
   `group.updateMatrixWorld(true)` itself. Anything else raycast against needs
   its transform current too — the aiming laser had to refresh it before using
@@ -2806,6 +2844,21 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the controller came from one question: how can it play
+smoother on all devices without giving up how it looks. Profiled in a
+fight with twelve hostiles on seed 1, the CPU step was 0.5 ms and the
+frame's JS under 15 ms, so the bill is the GPU, and the largest piece of
+it that buys nothing on screen was the sun's shadow map redrawing the
+whole static city every frame. It is cached now (invariant above).
+Measured interleaved in one page, cache on and off: draw calls a frame
+974 → 729 on high and 904 → 700 on medium, triangles 2.21M → 1.54M and
+2.08M → 1.49M. Under software rendering frame time did not move (high
+4,664 against 4,693 ms, medium 4,420 against 4,525), for the reason the
+Performance section gives: there pixels are the bill and vertices are
+nearly free. On a GPU the shadow pass is vertex and draw-call work, which
+is what came out. Layout, prints and the mark after boot are unchanged:
+the caches are made in a `reserve`, and nothing is drawn differently.
 
 The pass after the wet streets was four of eight ideas offered, taken
 together: gangways between roofs, a marksman rifle to buy, storm waves and

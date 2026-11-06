@@ -25,7 +25,7 @@ import { Barrels, BARREL } from './barrels.js';
 import { Glass } from './glass.js';
 import { updateWet } from './wet.js';
 import { installAtmosphere, skyMaterial, environmentFrom, SUN_DIR, SUN_COLOR } from './atmosphere.js';
-import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE } from './shadows.js';
+import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE, ShadowCache } from './shadows.js';
 import { initRandom, getSeed, reserve, spend } from './rng.js';
 
 const V1 = new THREE.Vector3();
@@ -225,6 +225,9 @@ class Game {
         city = buildCity(this.scene, painted);
         this.world = city.world;
         this.city = city.group;          // the merged, baked meshes checks read
+        // the city's shadow is drawn once and copied in (shadows.js)
+        this.shadowCache = new ShadowCache(this.renderer, this.sun, this.city);
+        this.cacheShadows();
         this.fireBarrels = city.fireBarrels;
         // and what blows them up: no three object, no draw (barrels.js)
         this.barrels = new Barrels(city.fireBarrels, this);
@@ -534,6 +537,24 @@ class Game {
   }
 
   /**
+   * Hand the sun's shadow to its cache (`ShadowCache` in shadows.js), and
+   * every other light's to three as before. Three calls its shadow pass from
+   * inside every `render` with the lights that cast; only the world scene's
+   * has the sun in it.
+   */
+  cacheShadows() {
+    const sm = this.renderer.shadowMap, orig = sm.render.bind(sm);
+    const cache = this.shadowCache, rest = [];
+    sm.render = (lights, scene, camera) => {
+      if (!sm.enabled || scene !== this.scene || !lights.includes(cache.light)) return orig(lights, scene, camera);
+      rest.length = 0;
+      for (const l of lights) if (l !== cache.light) rest.push(l);
+      cache.render(orig, scene, camera);
+      if (rest.length) orig(rest, scene, camera);
+    };
+  }
+
+  /**
    * The tight shadow map: a light at the sun's angle with no intensity of its
    * own, whose map the sun reads near the player (see shadows.js). Added
    * after the sun, because the cascade lookup relies on the sun being the
@@ -637,6 +658,7 @@ class Game {
 
     sizeShadow(this.sun, cfg.span, cfg.shadowSize);
     this.shadowSpan = cfg.span;
+    this.shadowCache?.reset();
     // the cascade switches off with the shadows or on a tier without one;
     // with a single shadowed light the ordinary lookup compiles instead
     this.sunNear.castShadow = cfg.shadows && cfg.nearSize > 0;
