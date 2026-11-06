@@ -183,6 +183,99 @@ check('the near shadow cascade draws the street it covers, not the city', { weig
   return r;
 });
 
+check('the sun keeps the city\'s shadow and redraws only what moves, and the map is the one it drew', { weight: 2.4 }, async (page) => {
+  // The sun's shadow map is 2,048 texels over 110 m and drew the whole
+  // static city into it every frame, a third of the frame's draw calls, for
+  // a picture that only changes when the box moves a texel. ShadowCache draws
+  // the city once into a bigger map and copies the window the box covers
+  // each frame, then draws only what is not the city over it. This compares
+  // that map with the one drawn whole, at rest, after walking far enough for
+  // a new cache to be drawn a quarter a frame, and asks that a frame drawn
+  // twice without a step (a paused one) does not move the cache.
+  const r = await page.evaluate(() => {
+    const g = window.__game, rd = g.renderer, c = g.shadowCache, s = g.sun.shadow;
+    rd.setAnimationLoop(null);
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0;
+    g.applyQuality('high');
+    g.damagePlayer = () => {};
+    g.player.reset(-17, 24); g.player.yaw = 2.2;
+    for (const t of ['raider', 'scavenger', 'brute']) {
+      const e = g.spawnEnemy(t);
+      e.update = () => {};
+      const a = g.enemies.length * 2.1;
+      e.pos.set(-17 + Math.cos(a) * 6, e.pos.y, 24 + Math.sin(a) * 6);
+      e.group.position.copy(e.pos); e.group.updateMatrixWorld(true);
+    }
+    const tick = () => { g.time += 1 / 60; g.step(1 / 60); g.render(); };
+    for (let i = 0; i < 3; i++) tick();
+    const n = s.mapSize.x;
+    const read = () => { const b = new Uint8Array(n * n * 4); rd.readRenderTargetPixels(s.map, 0, 0, n, n, b); return b; };
+    const dec = (X, i) => X[i] / 255 + X[i + 1] / 65025 + X[i + 2] / 16581375 + X[i + 3] / 4228250625;
+    const calls = () => { rd.info.autoReset = false; rd.info.reset(); g.render(); const k = rd.info.render.calls; rd.info.autoReset = true; return k; };
+    const V3 = g.player.position.constructor;
+    const compare = (around = []) => {
+      const cached = calls(); const A = read();
+      const keep = { active: c.active, pending: c.pending, depth: c.depth, reset: c.reset };
+      c.enabled = false; c.reset = () => {};
+      const whole = calls(); const B = read();
+      c.enabled = true; Object.assign(c, keep);
+      let differ = 0, cast = 0;
+      for (let i = 0; i < A.length; i += 4) {
+        if (B[i] !== 255 || B[i + 1] !== 255) cast++;
+        if (Math.abs(dec(A, i) - dec(B, i)) > 1e-5) differ++;
+      }
+      // and the texels round each of `around`, where the sun's map sees it
+      let local = 0;
+      for (const p of around) {
+        const u = new V3(p.x, p.y + 0.5, p.z).applyMatrix4(s.matrix);
+        const cx = Math.round(u.x * n), cy = Math.round(u.y * n);
+        for (let y = cy - 30; y <= cy + 30; y++) for (let x = cx - 30; x <= cx + 30; x++) {
+          if (x < 0 || y < 0 || x >= n || y >= n) continue;
+          const i = (y * n + x) * 4;
+          if (Math.abs(dec(A, i) - dec(B, i)) > 1e-5) local++;
+        }
+      }
+      return { share: differ / (n * n), cast: cast / (n * n), cached, whole, local };
+    };
+    const atRest = compare();
+    // a paused frame: drawn again and again, nothing stepped
+    const before = { a: c.active, rebuilds: c.rebuilds, pending: c.pending };
+    for (let i = 0; i < 4; i++) g.render();
+    const paused = { moved: c.active !== before.a || c.rebuilds !== before.rebuilds || c.pending !== before.pending };
+    // walk toward the sun until a new cache has been drawn a tile a frame
+    const sun = g.sun.position.clone().sub(g.sun.target.position).normalize();
+    const rebuilds = c.rebuilds, first = c.active;
+    let k = 0;
+    for (; k < 40 && c.active === first; k++) {
+      g.player.position.x += sun.x; g.player.position.z += sun.z; tick();
+    }
+    const walked = compare();
+    // a drum is left out of the merge so it can be blown to a stump: its
+    // shadow has to go with it, not stay in the cache as a whole drum's
+    const pp = g.player.position;
+    const near = g.barrels.list.filter((b) => Math.hypot(b.x - pp.x, b.z - pp.z) < 45);
+    for (const b of near) g.barrels.burst(b);
+    tick();
+    const blown = compare(near);
+    return { atRest, paused, walked, blown, drums: near.length, steps: k, swapped: c.active !== first, rebuiltWhole: c.rebuilds - rebuilds, tiles: c.tiles };
+  });
+  // Measured on seed 1: 0.016% of texels differ at rest, all of them ties
+  // between surfaces drawn over one another, 29 pixels of 921,600 in the
+  // frame; 683 of 4,194,304. Draw calls 500 against 735 drawn whole, in
+  // this view. With the drums cached, a blown one leaves its shadow.
+  expect(r.atRest.cast > 0.3, `the map holds only ${(r.atRest.cast * 100).toFixed(0)}% shadow`);
+  expect(r.atRest.share < 0.001, `${(r.atRest.share * 100).toFixed(2)}% of the cached map differs from the map drawn whole`);
+  expect(r.atRest.cached < r.atRest.whole - 100, `the frame takes ${r.atRest.cached} calls cached against ${r.atRest.whole}`);
+  expect(!r.paused.moved, 'a frame drawn again without a step moved the cache');
+  expect(r.swapped && r.rebuiltWhole === 0 && r.tiles >= 4, `walking ${r.steps} steps: swapped ${r.swapped}, ${r.rebuiltWhole} drawn whole, ${r.tiles} tiles`);
+  expect(r.walked.share < 0.001, `after the walk ${(r.walked.share * 100).toFixed(2)}% of the cached map differs`);
+  expect(r.drums > 0, 'no fire barrel in the box to blow');
+  expect(r.blown.share < 0.001, `with ${r.drums} drums blown ${(r.blown.share * 100).toFixed(2)}% of the cached map differs`);
+  expect(r.blown.local < 10 * r.drums, `${r.blown.local} texels differ round ${r.drums} blown drums`);
+  return r;
+});
+
 check('bullets damage hostiles, headshots hurt more', async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
