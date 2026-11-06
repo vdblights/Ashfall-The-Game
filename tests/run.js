@@ -192,12 +192,19 @@ check('the sun keeps the city\'s shadow and redraws only what moves, and the map
   // that map with the one drawn whole, at rest, after walking far enough for
   // a new cache to be drawn a quarter a frame, and asks that a frame drawn
   // twice without a step (a paused one) does not move the cache.
-  const r = await page.evaluate(() => {
+  // One evaluate a stage, and the walk a few steps at a time: in one
+  // evaluate the whole check held the page for minutes and CI's runner was
+  // shut down under it, which is the stairwell check's lesson again. The
+  // frame is drawn at half the high tier's resolution, which the shadow map
+  // does not see.
+  await page.evaluate(() => {
     const g = window.__game, rd = g.renderer, c = g.shadowCache, s = g.sun.shadow;
     rd.setAnimationLoop(null);
     g.startRun();
     g.startWave = () => {}; g.spawnQueue.length = 0;
     g.applyQuality('high');
+    rd.setPixelRatio(rd.getPixelRatio() / 2);
+    g.resize();
     g.damagePlayer = () => {};
     g.player.reset(-17, 24); g.player.yaw = 2.2;
     for (const t of ['raider', 'scavenger', 'brute']) {
@@ -208,7 +215,6 @@ check('the sun keeps the city\'s shadow and redraws only what moves, and the map
       e.group.position.copy(e.pos); e.group.updateMatrixWorld(true);
     }
     const tick = () => { g.time += 1 / 60; g.step(1 / 60); g.render(); };
-    for (let i = 0; i < 3; i++) tick();
     const n = s.mapSize.x;
     const read = () => { const b = new Uint8Array(n * n * 4); rd.readRenderTargetPixels(s.map, 0, 0, n, n, b); return b; };
     const dec = (X, i) => X[i] / 255 + X[i + 1] / 65025 + X[i + 2] / 16581375 + X[i + 3] / 4228250625;
@@ -238,28 +244,44 @@ check('the sun keeps the city\'s shadow and redraws only what moves, and the map
       }
       return { share: differ / (n * n), cast: cast / (n * n), cached, whole, local };
     };
-    const atRest = compare();
-    // a paused frame: drawn again and again, nothing stepped
+    window.__sc = { tick, compare };
+    for (let i = 0; i < 3; i++) tick();
+  });
+  const atRest = await page.evaluate(() => window.__sc.compare());
+  // a paused frame: drawn again and again, nothing stepped
+  const paused = await page.evaluate(() => {
+    const g = window.__game, c = g.shadowCache;
     const before = { a: c.active, rebuilds: c.rebuilds, pending: c.pending };
     for (let i = 0; i < 4; i++) g.render();
-    const paused = { moved: c.active !== before.a || c.rebuilds !== before.rebuilds || c.pending !== before.pending };
-    // walk toward the sun until a new cache has been drawn a tile a frame
-    const sun = g.sun.position.clone().sub(g.sun.target.position).normalize();
-    const rebuilds = c.rebuilds, first = c.active;
-    let k = 0;
-    for (; k < 40 && c.active === first; k++) {
-      g.player.position.x += sun.x; g.player.position.z += sun.z; tick();
-    }
-    const walked = compare();
-    // a drum is left out of the merge so it can be blown to a stump: its
-    // shadow has to go with it, not stay in the cache as a whole drum's
-    const pp = g.player.position;
+    window.__sc.first = c.active; window.__sc.rebuilds = c.rebuilds;
+    return { moved: c.active !== before.a || c.rebuilds !== before.rebuilds || c.pending !== before.pending };
+  });
+  // walk toward the sun until a new cache has been drawn a tile a frame
+  let steps = 0;
+  for (; steps < 40;) {
+    const done = await page.evaluate(() => {
+      const g = window.__game, c = g.shadowCache;
+      const sun = g.sun.position.clone().sub(g.sun.target.position).normalize();
+      for (let i = 0; i < 4 && c.active === window.__sc.first; i++) {
+        g.player.position.x += sun.x; g.player.position.z += sun.z; window.__sc.tick();
+      }
+      return c.active !== window.__sc.first;
+    });
+    steps += 4;
+    if (done) break;
+  }
+  const walked = await page.evaluate(() => window.__sc.compare());
+  // a drum is left out of the merge so it can be blown to a stump: its
+  // shadow has to go with it, not stay in the cache as a whole drum's
+  const tail = await page.evaluate(() => {
+    const g = window.__game, c = g.shadowCache, pp = g.player.position;
     const near = g.barrels.list.filter((b) => Math.hypot(b.x - pp.x, b.z - pp.z) < 45);
     for (const b of near) g.barrels.burst(b);
-    tick();
-    const blown = compare(near);
-    return { atRest, paused, walked, blown, drums: near.length, steps: k, swapped: c.active !== first, rebuiltWhole: c.rebuilds - rebuilds, tiles: c.tiles };
+    window.__sc.tick();
+    const blown = window.__sc.compare(near);
+    return { blown, drums: near.length, swapped: c.active !== window.__sc.first, rebuiltWhole: c.rebuilds - window.__sc.rebuilds, tiles: c.tiles };
   });
+  const r = { atRest, paused, walked, steps, ...tail };
   // Measured on seed 1: 0.016% of texels differ at rest, all of them ties
   // between surfaces drawn over one another, 29 pixels of 921,600 in the
   // frame; 683 of 4,194,304. Draw calls 500 against 735 drawn whole, in
