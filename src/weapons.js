@@ -885,6 +885,7 @@ export class WeaponSystem {
     this.index = 0;
     this.reloading = false;
     this.reloadEnd = 0;
+    this.reloadCues = [];
     this.nextShot = 0;
     this.adsT = 0;
     this.ads = false;
@@ -999,8 +1000,13 @@ export class WeaponSystem {
     this.reloadStart = time;
     this.reloadEnd = time + w.def.reload;
     audio.reload('out');
-    setTimeout(() => audio.reload('in'), w.def.reload * 450);
-    setTimeout(() => audio.reload(w.def.id === 'shotgun' ? 'shell' : 'bolt'), w.def.reload * 800);
+    // the later stages are cued on game time and played from update(), so a
+    // pause holds them and a reload cut short by a swap or a strike drops them
+    // (they were wall-clock timeouts, which played on behind the pause screen)
+    this.reloadCues = [
+      [time + w.def.reload * 0.45, 'in'],
+      [time + w.def.reload * 0.8, w.def.id === 'shotgun' ? 'shell' : 'bolt'],
+    ];
   }
 
   finishReload() {
@@ -1118,6 +1124,9 @@ export class WeaponSystem {
         this.game.meleeStrike();
       }
     }
+    if (this.reloading) {
+      while (this.reloadCues.length && time >= this.reloadCues[0][0]) audio.reload(this.reloadCues.shift()[1]);
+    } else this.reloadCues.length = 0;
     if (this.reloading && time >= this.reloadEnd) this.finishReload();
 
     if (this._flashLife > 0) {

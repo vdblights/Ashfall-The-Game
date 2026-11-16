@@ -3,6 +3,7 @@ import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN, SECTOR, outskirtsHeight } 
 import { Ashfall, settleAsh } from './ash.js';
 import { Storm } from './storm.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
+import { bindScreens, showScreen } from './screens.js';
 import { Player, Input, LEAN } from './player.js';
 import { WeaponSystem, MELEE_RANGE, MELEE_DAMAGE } from './weapons.js';
 import { GrenadeSystem, FUSE, BLAST_RADIUS, BLAST_DAMAGE } from './grenades.js';
@@ -134,6 +135,8 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     this.perf = new PerfMeter(this.renderer);
+    // the menus are modal dialogs; the one showing at boot opens now
+    bindScreens();
     // the headless suite draws in software and was written against the high tier
     this.suite = !!window.__ashfallSuite;
     this.renderer.shadowMap.enabled = true;
@@ -1028,8 +1031,8 @@ class Game {
       const to = i + 1 < ACTS.length ? ACTS[i + 1].from - 1 : FINALE;
       return `<li><b>${a.title} &middot; ${a.name}</b>WAVES ${a.from}&ndash;${to}</li>`;
     }).join('');
-    document.getElementById('menu').classList.add('hidden');
-    document.getElementById('briefing').classList.remove('hidden');
+    showScreen('menu', false);
+    showScreen('briefing', true);
     this.state = 'briefing';
   }
 
@@ -1098,10 +1101,10 @@ class Game {
     this.hud.clearRadio();
     this.hud.onRadio = () => audio.radio();
 
-    document.getElementById('menu').classList.add('hidden');
-    document.getElementById('briefing').classList.add('hidden');
-    document.getElementById('gameover').classList.add('hidden');
-    document.getElementById('pause').classList.add('hidden');
+    showScreen('menu', false);
+    showScreen('briefing', false);
+    showScreen('gameover', false);
+    showScreen('pause', false);
     this.hud.show(true);
     audio.startAmbience();
     this.state = 'playing';
@@ -1145,12 +1148,12 @@ class Game {
   pause() {
     if (this.state !== 'playing') return;
     this.state = 'paused';
-    document.getElementById('pause').classList.remove('hidden');
+    showScreen('pause', true);
   }
 
   resume() {
     if (this.state !== 'paused') return;
-    document.getElementById('pause').classList.add('hidden');
+    showScreen('pause', false);
     this.state = 'playing';
     this.input.requestLock();
   }
@@ -1159,10 +1162,10 @@ class Game {
     this.state = 'menu';
     this.storm.reset();
     audio.stopAmbience();
-    document.getElementById('pause').classList.add('hidden');
-    document.getElementById('gameover').classList.add('hidden');
-    document.getElementById('briefing').classList.add('hidden');
-    document.getElementById('menu').classList.remove('hidden');
+    showScreen('pause', false);
+    showScreen('gameover', false);
+    showScreen('briefing', false);
+    showScreen('menu', true);
     this.hud.show(false);
     this.input.exitLock();
   }
@@ -1200,7 +1203,7 @@ class Game {
         `<div>OBJECTIVES <b>${this.objectivesSecured}</b>` +
         (this.objectivesLost ? ` &middot; LOST <b>${this.objectivesLost}</b>` : '') + '</div>' +
         (beatScore || beatWave ? '<div class="record">NEW PERSONAL BEST</div>' : '');
-      document.getElementById('gameover').classList.remove('hidden');
+      showScreen('gameover', true);
       this.hud.show(false);
     }, 1600);
   }

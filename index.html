@@ -107,7 +107,7 @@
   </div>
 
   <!-- ============ MENUS ============ -->
-  <div id="menu" class="overlay">
+  <dialog id="menu" class="overlay" aria-label="ASHFALL">
     <div class="menu-inner">
       <h1 class="title">ASHFALL</h1>
       <p class="subtitle">Carrow, Sector 7 &mdash; buried in ash. Someone is still alive down there.</p>
@@ -164,9 +164,9 @@
         <kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> also aim
       </div>
     </div>
-  </div>
+  </dialog>
 
-  <div id="armoury" class="overlay hidden">
+  <dialog id="armoury" class="overlay hidden" aria-label="Armoury">
     <div class="menu-inner">
       <h2 class="title small">ARMOURY</h2>
       <p class="subtitle" id="armoury-scrip">SCRIP 0</p>
@@ -174,9 +174,9 @@
       <button id="armoury-close" class="btn">DEPLOY</button>
       <p class="armoury-hint">1&ndash;7 to buy &middot; B to deploy &middot; scrip is earned with score, and spending it costs no score</p>
     </div>
-  </div>
+  </dialog>
 
-  <div id="briefing" class="overlay hidden">
+  <dialog id="briefing" class="overlay hidden" aria-label="Operation briefing">
     <div class="menu-inner brief">
       <div class="brief-kicker">OPERATION</div>
       <h2 class="title small">ASHFALL</h2>
@@ -186,9 +186,9 @@
       <button id="brief-btn" class="btn">BEGIN</button>
       <p class="armoury-hint">Enter to begin &middot; the operation runs twelve waves, and the city does not stop after it</p>
     </div>
-  </div>
+  </dialog>
 
-  <div id="pause" class="overlay hidden">
+  <dialog id="pause" class="overlay hidden" aria-label="Paused">
     <div class="menu-inner">
       <h2 class="title small">PAUSED</h2>
       <button id="resume-btn" class="btn">RESUME</button>
@@ -210,16 +210,16 @@
       </div>
       <button id="quit-btn" class="btn ghost">ABANDON RUN</button>
     </div>
-  </div>
+  </dialog>
 
-  <div id="gameover" class="overlay hidden">
+  <dialog id="gameover" class="overlay hidden" aria-label="You died">
     <div class="menu-inner">
       <h2 class="title small dead">YOU DIED</h2>
       <div id="debrief"></div>
       <div id="stats"></div>
       <button id="retry-btn" class="btn">REDEPLOY</button>
     </div>
-  </div>
+  </dialog>
 </div>
 
 <script type="module" src="./src/main.js"></script>
