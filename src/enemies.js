@@ -984,7 +984,9 @@ const NO_RAYCAST = () => {};
  * meshes, every check reads their parts, and the low tier dresses them on
  * spawn as it always did. What the batches add is the drawing, and the one
  * thing they give up is culling a hostile on its own — at a hostile's
- * triangle count that is cheaper than the calls it used to take.
+ * triangle count that is cheaper than the calls it used to take. A batch is
+ * still culled whole, by a sphere round what it holds this frame, so a pass
+ * that sees none of an archetype draws none of it.
  */
 export class HostileBatches {
   constructor(scene, capacity = 16) {
@@ -1026,9 +1028,10 @@ export class HostileBatches {
     }
     m.count = 0;
     m.visible = false;
-    // the batch is drawn as a whole, wherever its hostiles are; and it is
-    // never shot, the rigs are
-    m.frustumCulled = false;
+    // the batch is culled as a whole, by a sphere round every instance it
+    // holds this frame (`sync`), so a camera or a shadow map that sees none
+    // of an archetype draws none of it; and it is never shot, the rigs are
+    m.frustumCulled = true;
     m.raycast = NO_RAYCAST;
     m.userData.batch = key;
     m.userData.capacity = capacity;
@@ -1063,6 +1066,9 @@ export class HostileBatches {
         if (!batch.visible) continue;
         batch.instanceMatrix.needsUpdate = true;
         if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+        // every part's own sphere carried by its instance's matrix: a dropped
+        // gun tumbling away is inside it, wherever it lands
+        batch.computeBoundingSphere();
       }
     }
   }

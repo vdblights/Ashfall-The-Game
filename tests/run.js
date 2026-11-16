@@ -9193,6 +9193,121 @@ check('a wave is drawn a part at a time, and looks like the hostiles it is', { w
   return r;
 });
 
+check('a fight draws, writes and hears only what it has to', { weight: 1.2 }, async (page) => {
+  // Four things a fight paid for every frame that nobody could see or hear.
+  // A building's cache was three or four draw calls in the scene and both
+  // shadow maps wherever it lay, 67 of them on seed 1, nearly all behind
+  // walls: it is drawn within CACHE_SHOW of the player now. A hostile batch
+  // was never culled, so a shadow map or a camera that saw none of an
+  // archetype drew all of it: it carries a sphere round what it holds. The
+  // HUD rewrote two dozen readouts every step, and redrew the radar's canvas
+  // every step too, which is several times a frame on a slow machine. And
+  // every placed sound made a new HRTF panner. Measured on seed 1 with twelve
+  // hostiles, 745 draw calls a frame on high became 575, and the game step
+  // 0.41-0.44 ms became 0.23-0.34.
+  const r = await page.evaluate(async () => {
+    const { audio } = await import('/src/audio.js');
+    const { CACHE_SHOW } = await import('/src/main.js');
+    const g = window.__game;
+    g.renderer.setAnimationLoop(null);
+    g.startRun();
+    g.startWave = () => {}; g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+
+    // the caches: shown near, not far
+    g.step(1 / 60);
+    const me = g.player.position;
+    const caches = g.pickups.filter((q) => q.cache);
+    let near = 0, nearShown = 0, far = 0, farShown = 0;
+    for (const q of caches) {
+      const d = Math.hypot(q.mesh.position.x - me.x, q.mesh.position.z - me.z);
+      if (d < CACHE_SHOW - 1) { near++; if (q.mesh.visible) nearShown++; }
+      else if (d > CACHE_SHOW + 1) { far++; if (q.mesh.visible) farShown++; }
+    }
+
+    // the hostile batches: a wave behind the camera costs the frame nothing
+    g.settings.quality = 'low';
+    g.applyQuality('low');
+    g.player.reset(-17, 24); g.player.yaw = 2.2; g.player.pitch = -0.05;
+    g.step(1 / 60);
+    const p = g.player.position;
+    const fx = -Math.sin(g.player.yaw), fz = -Math.cos(g.player.yaw);
+    g.renderer.info.autoReset = false;
+    const calls = () => {
+      g.renderer.info.reset();
+      g.renderer.setRenderTarget(null); g.renderer.render(g.scene, g.camera);
+      return g.renderer.info.render.calls;
+    };
+    const empty = calls();
+    const kinds = ['raider', 'scavenger', 'shotgunner'];
+    const wave = [];
+    for (let i = 0; i < 6; i++) {
+      const e = g.spawnEnemy(kinds[i % 3]);
+      const d = 9 + (i % 3) * 2, s = (i >> 1) - 1;
+      e.spawn(p.x - fx * d + fz * s * 2, p.z - fz * d - fx * s * 2, 1, 0.3);
+      e.alerted = true; e.nextFire = Infinity;
+      e.update(1 / 60, g.time, g.player, g.world);
+      e.update = function () {};
+      wave.push(e);
+    }
+    const behind = calls();
+    // and in front of it, every archetype is drawn
+    for (const e of wave) {
+      e.group.position.x += 2 * (p.x - e.group.position.x);
+      e.group.position.z += 2 * (p.z - e.group.position.z);
+      e.group.updateMatrixWorld(true);
+    }
+    const ahead = calls();
+    g.renderer.info.autoReset = true;
+    g.settings.quality = 'high';
+    g.applyQuality('high');
+
+    // the HUD: a step that changes nothing writes nothing
+    const root = document.getElementById('hud');
+    g.hud.update(g);
+    let writes = 0; const what = [];
+    const seen = new MutationObserver((list) => { writes += list.length; for (const m of list) what.push(m.type + ':' + (m.target.id || m.target.className || m.target.nodeName) + ':' + (m.attributeName || '')); });
+    seen.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+    g.hud.update(g);
+    await new Promise((res) => setTimeout(res, 0));
+    seen.disconnect();
+    const records = writes + seen.takeRecords().length;
+    // and the radar is drawn at most thirty times a second of play
+    const draw = g.hud.drawRadar;
+    let radar = 0;
+    g.hud.drawRadar = function (...a) { radar++; return draw.apply(this, a); };
+    for (let i = 0; i < 120; i++) { g.time += 1 / 120; g.hud.update(g); }
+    g.hud.drawRadar = draw;
+
+    // the panners: a sound from a place it has been heard from before
+    const saved = { ctx: audio.ctx, master: audio.master, noiseBuf: audio.noiseBuf };
+    let made = 0;
+    try {
+      audio.ctx = null;
+      const ctx = new OfflineAudioContext(2, 4410, 44100);
+      const make = ctx.createPanner.bind(ctx);
+      ctx.createPanner = () => { made++; return make(); };
+      audio.init(ctx);
+      const places = [{ x: 3, y: 1, z: 2 }, { x: -8, y: 1, z: 5 }, { x: 12, y: 4, z: -6 }];
+      for (let i = 0; i < 60; i++) {
+        const at = places[i % 3];
+        audio.impact({ x: at.x + 0.2 * Math.sin(i), y: at.y, z: at.z + 0.2 * Math.cos(i) });
+      }
+    } finally { Object.assign(audio, saved); }
+
+    return { caches: caches.length, near, nearShown, far, farShown, calls: { empty, behind, ahead }, records, what, radar, made };
+  });
+  expect(r.near > 0 && r.far > 0, `the caches measure nothing: ${r.near} near and ${r.far} far`);
+  expect(r.nearShown === r.near, `${r.near - r.nearShown} of ${r.near} caches near the player are not drawn`);
+  expect(r.farShown === 0, `${r.farShown} of ${r.far} caches past CACHE_SHOW are still drawn`);
+  expect(r.calls.ahead > r.calls.empty + 3, `a wave in front of the camera drew nothing (${JSON.stringify(r.calls)})`);
+  expect(r.calls.behind === r.calls.empty,
+    `a wave behind the camera cost ${r.calls.behind - r.calls.empty} draw calls (${JSON.stringify(r.calls)})`);
+  expect(r.records === 0, `a HUD update that changed nothing wrote to the page ${r.records} times (${r.what.join(', ')})`);
+  expect(r.radar <= 31, `the radar was drawn ${r.radar} times in a second of play`);
+  expect(r.made === 3, `sixty sounds from three places made ${r.made} panners`);
+  return r;
+});
+
 check('the bake darkens the ground the city stands on', { reads: true }, async (page) => {
   const r = await page.evaluate(() => {
     const g = window.__game;
