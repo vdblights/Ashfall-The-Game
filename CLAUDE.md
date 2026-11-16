@@ -95,7 +95,8 @@ builds, never to play.
 | `src/rng.js` | Seeded `Math.random` for the page's lifetime, and `reserve`/`spend` |
 | `src/loading.js` | The loading screen: stages, progress, field notes, the sector survey |
 | `assets/branding/` | The logo, icons and X art, and the code that draws them; nothing in the game loads them but the tab and home-screen icons |
-| `src/perf.js` | The frame-rate readout (`` ` ``), and the name of the GPU the browser draws with |
+| `src/perf.js` | The frame-rate readout (`` ` ``), the stalls the browser reports, and the name of the GPU the browser draws with |
+| `src/screens.js` | Every menu is a modal `<dialog>`, opened and closed by its `hidden` class |
 
 The whole game hangs off `window.__game`, which is how tests and probes drive it.
 
@@ -765,6 +766,24 @@ These each cost real debugging time. Changing them needs a reason.
   objective, the intermission before the next wave — ran out while nobody
   was playing. It stops while paused or in the armoury now. Measured by the
   armoury check: 0.12 s over five frames, against 0.
+- **A screen is a modal dialog, and its `hidden` class is still the
+  switch.** The menu, briefing, armoury, pause and game over are
+  `<dialog class="overlay">`, opened with `showModal()` (`screens.js`), so
+  focus stays in them and what is behind them is inert. Everything that
+  showed a screen by toggling `hidden` still does; `showScreen` toggles it
+  and opens or closes the dialog at once, because a resume must close pause
+  before it asks for the mouse, and an observer follows any other toggle.
+  Esc's `cancel` is refused, so the game's own key handler decides. A screen
+  scrolls (`align-items: safe center`) and opens at its top: centred, a
+  screen taller than the window had its title pushed off where nothing
+  could scroll to it, and `showModal` focusing the last button scrolled the
+  armoury to its foot. The frame-rate readout is a manual popover, raised
+  each time a screen opens, or a modal would cover it. The mouse asks for
+  raw input (`unadjustedMovement`) and takes the ordinary lock on a
+  `NotSupportedError`. The reload's sound cues are on game time, so a
+  paused reload is silent. And the readout names stalls the browser
+  reports as Long Animation Frames, with the script that held the frame
+  where it says. `the menus are modal dialogs...` fails with each put back.
 - **A band round a building is a ring, not a slab.** The ledge at the
   foot of every tower (`skirt`, 2.8-3.2 m) and the string course under its
   cap were boxes the size of the footprint: inside a closed block nobody

@@ -15,6 +15,8 @@
  * moves neither the layout nor the stream that picks the next spawn.
  */
 
+import { showScreen } from './screens.js';
+
 /**
  * What each tier does, by the index of the tier owned (0 is none). Read by
  * the systems themselves — `Weapons.magSize` and `fire`, `Game.hitscan`,
@@ -139,7 +141,7 @@ export class ArmouryScreen {
   }
 
   show(on) {
-    this.root.classList.toggle('hidden', !on);
+    showScreen('armoury', on);
     if (on) this.render();
   }
 }

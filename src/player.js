@@ -137,11 +137,33 @@ export class Input {
     if (!this.canvas.requestPointerLock) { this.enableFallback(); return; }
     // always worth another try: a denial can be temporary (Chrome rate-limits
     // re-locking after Esc), and succeeding later should restore real capture
+    // ask for raw mouse counts first (`unadjustedMovement`), which take the
+    // operating system's pointer acceleration out of the look: a flick turns
+    // as far however fast it is made. Where the platform cannot give raw
+    // input the promise rejects, and the ordinary lock is asked for instead;
+    // browsers that ignore the option just lock as they always did.
+    const plain = () => {
+      try {
+        const res = this.canvas.requestPointerLock();
+        if (res && typeof res.catch === 'function') res.catch(() => this.enableFallback());
+      } catch {
+        this.enableFallback();
+      }
+    };
     try {
-      const res = this.canvas.requestPointerLock();
-      if (res && typeof res.catch === 'function') res.catch(() => this.enableFallback());
+      const res = this.canvas.requestPointerLock({ unadjustedMovement: true });
+      this.rawRequested = true;
+      if (res && typeof res.then === 'function') {
+        res.then(() => { this.raw = true; }, (e) => {
+          this.raw = false;
+          // a denial (rate limit after Esc, no gesture) is not a missing
+          // feature, and asking again at once would only be denied again
+          if (e && e.name === 'NotSupportedError') plain();
+          else this.enableFallback();
+        });
+      }
     } catch {
-      this.enableFallback();
+      plain();
     }
     clearTimeout(this._lockTimer);
     this._lockTimer = setTimeout(() => { if (!this.locked) this.enableFallback(); }, 700);

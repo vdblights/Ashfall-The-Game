@@ -312,6 +312,14 @@ html, body {
     var(--ink);
   z-index: 10;
 }
+/* a screen is a <dialog>; take off what the browser gives one */
+dialog.overlay {
+  position: fixed; width: 100%; height: 100%; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; color: inherit; overflow: auto;
+  align-items: safe center; /* taller than the window: start at its top and scroll */
+}
+dialog.overlay::backdrop { background: transparent; }
+dialog.overlay:focus-visible { outline: none; }
 .menu-inner { text-align: center; max-width: 640px; padding: 30px; }
 
 .title {
@@ -441,6 +449,7 @@ kbd {
 /* the frame-rate readout: above every overlay, never in the way of a click */
 #perf {
   position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  margin: 0; border: 0; inset: 8px auto auto 50%; overflow: visible;
   z-index: 50; pointer-events: none;
   padding: 6px 10px; border-radius: 3px;
   background: rgba(10, 8, 6, 0.72);

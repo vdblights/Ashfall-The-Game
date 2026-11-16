@@ -6202,6 +6202,102 @@ check('the frame-rate readout shows on a key, and names the GPU', async (page) =
   return { text: shown.text.slice(0, 90), note: hidden.note };
 });
 
+check('the menus are modal dialogs, the mouse asks for raw input, a stall is named, and a paused reload is silent', async (page) => {
+  // Four things from the modern-web scan, measured where the game does them.
+  // The reload's later sounds were wall-clock timeouts and played on behind
+  // the pause screen; the screens were divs, with nothing holding focus or
+  // making the HUD behind them inert; the pointer lock never asked for raw
+  // counts; and the readout could say a frame rate but never which frame
+  // hitched.
+  const a = await page.evaluate(async () => {
+    const g = window.__game;
+    g.renderer.setAnimationLoop(null);
+    const menuModal = document.getElementById('menu').matches(':modal');
+    // raw input first, the plain lock where the platform has none
+    const asked = [];
+    g.canvas.requestPointerLock = (opts) => {
+      asked.push(opts ? { ...opts } : null);
+      return asked.length === 1
+        ? Promise.reject(new DOMException('no raw input here', 'NotSupportedError'))
+        : Promise.resolve();
+    };
+    g.startRun();
+    g.render = () => {};
+    g.startWave = () => {};
+    g.spawnQueue.length = 0;
+    await new Promise((r) => setTimeout(r, 20));
+    const menuClosed = !document.getElementById('menu').open;
+    g.pause();
+    const pause = document.getElementById('pause');
+    const cancel = new Event('cancel', { cancelable: true });
+    pause.dispatchEvent(cancel);
+    return { menuModal, menuClosed, asked, fallback: g.input.fallback,
+      pauseModal: pause.matches(':modal'), cancelRefused: cancel.defaultPrevented,
+      hudInert: !document.getElementById('hud').matches(':modal') };
+  });
+  // Esc on the open pause dialog is the game's to handle: it resumes
+  await page.keyboard.press('Escape');
+  const b = await page.evaluate(async () => {
+    const g = window.__game;
+    const { audio } = await import('/src/audio.js');
+    const heard = [];
+    audio.reload = (stage) => heard.push(stage);
+    const resumed = g.state === 'playing' && !document.getElementById('pause').open;
+    // a reload, paused before its later stages, stays silent however long
+    // the pause screen is up
+    const w = g.weapons;
+    w.current.mag = 1;
+    w.current.reserve = 60;
+    w.startReload(g.time);
+    g.pause();
+    await new Promise((r) => setTimeout(r, w.current.def.reload * 1000 + 400));
+    const duringPause = heard.slice();
+    g.resume();
+    for (let i = 0; i < 240 && w.reloading; i++) { g.time += 1 / 60; g.step(1 / 60); }
+    const afterResume = heard.slice();
+    // a reload cut short by a swap drops what it had left to say
+    heard.length = 0;
+    w.current.mag = 1;
+    w.startReload(g.time);
+    for (let i = 0; i < 6; i++) { g.time += 1 / 60; g.step(1 / 60); }
+    const other = w.weapons.findIndex((x, i) => i !== w.index && x.unlocked);
+    if (other >= 0) w.select(other, g.time);
+    for (let i = 0; i < 240; i++) { g.time += 1 / 60; g.step(1 / 60); }
+    const afterSwap = heard.slice();
+
+    // a long frame the browser reports, named on the readout
+    g.perf.show(true);
+    await new Promise((r) => requestAnimationFrame(() => {
+      const until = performance.now() + 140;
+      while (performance.now() < until) { /* hold the frame */ }
+      r();
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    const st = g.perf.stalls();
+    const line = g.perf.stallLine();
+    const perfOnTop = g.perf.el.popover ? g.perf.el.matches(':popover-open') : true;
+    g.pause();
+    const perfStillOnTop = g.perf.el.popover ? g.perf.el.matches(':popover-open') : true;
+    return { resumed, duringPause, afterResume, afterSwap, swapped: other >= 0, st, line, perfOnTop, perfStillOnTop };
+  });
+  expect(a.menuModal, 'the menu is not a modal dialog at boot');
+  expect(a.menuClosed, 'the menu dialog stayed open into the run');
+  expect(a.asked.length === 2 && a.asked[0]?.unadjustedMovement === true && a.asked[1] === null,
+    `the lock did not ask for raw input and then the plain lock: ${JSON.stringify(a.asked)}`);
+  expect(!a.fallback, 'a platform without raw input dropped to steering');
+  expect(a.pauseModal && a.cancelRefused, `pause is not a modal that refuses its own Esc: ${JSON.stringify(a)}`);
+  expect(b.resumed, 'Esc on the pause dialog did not resume');
+  expect(b.duringPause.join() === 'out', `the reload spoke behind the pause screen: ${b.duringPause}`);
+  expect(b.afterResume.includes('in') && b.afterResume.length === 3, `the reload's later stages were lost: ${b.afterResume}`);
+  expect(b.swapped && !b.afterSwap.includes('in'), `a reload cut short still played on: ${b.afterSwap}`);
+  if (b.st.supported) {
+    expect(b.st.count >= 1 && b.st.worst >= 100 && /worst \d+ ms/.test(b.line),
+      `a 140 ms frame was not reported: ${JSON.stringify(b.st)} ${b.line}`);
+  }
+  expect(b.perfOnTop && b.perfStillOnTop, 'the frame-rate readout is not over the pause screen');
+  return { asked: a.asked, heard: b.afterResume, stalls: b.st, line: b.line };
+});
+
 check('auto quality keeps watching, and gives back resolution before shaders', async (page) => {
   // It used to judge the first three seconds of a run — an empty street
   // before wave one, the cheapest the game ever is to draw — and then stop
