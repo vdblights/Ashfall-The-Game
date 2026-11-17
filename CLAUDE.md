@@ -1368,6 +1368,37 @@ These each cost real debugging time. Changing them needs a reason.
   cameras round differently: 0-35 pixels of 921,600 in the frame, no more
   than 18 levels in any channel. What it costs is video memory: two caches
   of 2,304² colour and depth on high, about 85 MB, and 21 MB on medium.
+- **What nobody can see or hear is not paid for.** Four things a fight
+  paid every frame for nothing, measured on seed 1 with twelve hostiles on
+  high: 745 draw calls a frame, of which about 160 were building caches
+  behind walls, and every hostile batch was drawn by every pass, seen or
+  not. **A cache is drawn within
+  `CACHE_SHOW` (40 m)** of the player and hidden past it (`updatePickups`),
+  because it lies inside a building and three or four meshes a cache, in
+  the scene and both shadow maps, came to a fifth of the frame's calls; a
+  drop is always drawn, because a drop has to be found. **A hostile batch
+  is culled whole** by a sphere round every instance it holds this frame
+  (`computeBoundingSphere` in `HostileBatches.sync`, which runs from
+  `scene.onBeforeRender`, before three culls), so each part's own sphere
+  rides its instance's matrix and a dropped gun is inside it wherever it
+  lands. **The HUD writes only what changed** (`_text`, `_width`, `_flag`,
+  the crosshair in whole pixels, the capture hint once a state): it runs
+  every step, and rewriting two dozen readouts restyled the HUD every frame.
+  It is still called from `step`, so a check that steps reads it current.
+  **The radar is drawn at most thirty times a second of game time**
+  (`RADAR_EVERY`), and **a placed sound reuses the panner of the place it
+  came from** (`PANNER`: 1.5 m cells, the 48 most recent), moved to exactly
+  where the new sound is, so a sound is still heard where it happened; a
+  forgotten panner is not disconnected, so what is still sounding through it
+  plays out. The cache is per context (`pannerCtx`), because the sound
+  checks play offline and put the live context back. Together: 745 → 575
+  calls a frame (scene 720 → 550, shadows 272 → 196), triangles 1.51M →
+  1.42M, and the game step 0.41-0.44 → 0.23-0.34 ms mean, interleaved
+  against `main` twice. `a fight draws, writes and hears only what it has
+  to` fails with each of the five taken out: 61 of 61 far caches drawn, a
+  wave behind the camera costing 34 calls, 8 HUD writes for a step that
+  changed nothing, the radar drawn 120 times in a second, and 60 panners
+  for sixty sounds from three places.
 - **Hit detection raycasts before the renderer runs**, so `Enemy.update` calls
   `group.updateMatrixWorld(true)` itself. Anything else raycast against needs
   its transform current too — the aiming laser had to refresh it before using
@@ -2863,6 +2894,19 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the menus came from one line: any more gameplay
+performance we can squeeze? Profiled in a fight with twelve hostiles on
+seed 1, the step was 1.3 ms under the profiler and allocated almost
+nothing (about 123 KB over 600 steps), so there was no garbage to chase;
+what was left was work nobody sees or hears, and it is the invariant
+above. The order to look in held again: draw calls by *object* first (a
+hook on `renderBufferDirect` names what each call drew, which is how the
+caches showed up as 89 calls of the main pass and 73 of the shadows), then
+the step's profile, where `createPanner` and the HUD were two of the three
+largest pieces after the hostiles themselves. Under software rendering the
+frame time does not move, for the usual reason; the calls are what a weak
+GPU driver waits on.
 
 The pass after the controller came from one question: how can it play
 smoother on all devices without giving up how it looks. Profiled in a

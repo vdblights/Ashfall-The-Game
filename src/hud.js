@@ -2,6 +2,8 @@ import { WEAPON_DEFS } from './weapons.js';
 import { cssColour } from './objectives.js';
 
 const $ = (id) => document.getElementById(id);
+/** How often the radar is redrawn, in seconds of game time. */
+const RADAR_EVERY = 1 / 30;
 
 /** All DOM-side readouts: bars, ammo, killfeed, radar, damage indicators. */
 export class HUD {
@@ -85,6 +87,9 @@ export class HUD {
    * in a frame that denies pointer lock.
    */
   captureState({ locked, fallback, embedded }) {
+    const state = `${!!locked}${!!fallback}${!!embedded}`;
+    if (state === this._capture) return;          // asked every step
+    this._capture = state;
     const hide = locked;
     this.el.captureHint.classList.toggle('hidden', hide);
     if (hide) return;
@@ -102,33 +107,63 @@ export class HUD {
 
   setCrosshairSpread(px, hidden) {
     const c = this.el.crosshair;
-    c.classList.toggle('hidden-ads', hidden);
-    c.style.width = c.style.height = (16 + px) + 'px';
-    c.style.margin = `-${(16 + px) / 2}px 0 0 -${(16 + px) / 2}px`;
+    // whole pixels, so a crosshair that has not moved is not written again
+    const d = 16 + Math.round(px);
+    if (hidden !== this._adsHidden) { this._adsHidden = hidden; c.classList.toggle('hidden-ads', hidden); }
+    if (d === this._cross) return;
+    this._cross = d;
+    c.style.width = c.style.height = d + 'px';
+    c.style.margin = `-${d / 2}px 0 0 -${d / 2}px`;
+  }
+
+  /**
+   * Write a readout only when it changes. `update` runs every step, and the
+   * HUD is two dozen numbers that change a few times a second: writing each
+   * every step made the browser restyle the HUD every frame for nothing.
+   */
+  _text(el, v) {
+    if (el._shown === v) return;
+    el._shown = v;
+    el.textContent = v;
+  }
+
+  _width(el, frac) {
+    const v = Math.round(frac * 1000) / 10;          // a tenth of a percent
+    if (el._width === v) return;
+    el._width = v;
+    el.style.width = v + '%';
+  }
+
+  _flag(el, cls, on) {
+    const key = '_has_' + cls;
+    if (el[key] === on) return;
+    el[key] = on;
+    el.classList.toggle(cls, on);
   }
 
   update(game) {
     const p = game.player, ws = game.weapons, w = ws.current;
 
-    this.el.wave.textContent = game.wave;
-    this.el.enemies.textContent = game.aliveCount + (game.pendingSpawns > 0 ? '+' : '');
-    this.el.score.textContent = game.score.toLocaleString();
-    if (this.el.scrip) this.el.scrip.textContent = (game.scrip || 0).toLocaleString();
+    const el = this.el;
+    this._text(el.wave, String(game.wave));
+    this._text(el.enemies, game.aliveCount + (game.pendingSpawns > 0 ? '+' : ''));
+    if (game.score !== this._score) { this._score = game.score; el.score.textContent = game.score.toLocaleString(); }
+    if (el.scrip && (game.scrip || 0) !== this._scrip) { this._scrip = game.scrip || 0; el.scrip.textContent = this._scrip.toLocaleString(); }
 
     const hp = Math.max(0, Math.round(p.health));
-    this.el.healthFill.style.width = (hp / p.maxHealth) * 100 + '%';
-    this.el.healthFill.classList.toggle('low', hp < 40);
-    this.el.healthNum.textContent = hp;
-    this.el.staminaFill.style.width = p.stamina * 100 + '%';
+    this._width(el.healthFill, hp / p.maxHealth);
+    this._flag(el.healthFill, 'low', hp < 40);
+    this._text(el.healthNum, String(hp));
+    this._width(el.staminaFill, p.stamina);
     const ap = Math.max(0, Math.round(p.armour || 0));
-    this.el.armourFill.style.width = (ap / p.maxArmour) * 100 + '%';
-    this.el.armourWrap.classList.toggle('none', ap === 0);
-    this.el.armourNum.textContent = ap;
+    this._width(el.armourFill, ap / p.maxArmour);
+    this._flag(el.armourWrap, 'none', ap === 0);
+    this._text(el.armourNum, String(ap));
 
-    this.el.weaponName.textContent = w.def.name;
-    this.el.mag.textContent = w.mag;
-    this.el.reserve.textContent = w.reserve;
-    this.el.ammo.classList.toggle('empty', w.mag === 0);
+    this._text(el.weaponName, w.def.name);
+    this._text(el.mag, String(w.mag));
+    this._text(el.reserve, String(w.reserve));
+    this._flag(el.ammo, 'empty', w.mag === 0);
     // An empty mag with reserve behind it prompts a reload. One with nothing
     // behind it used to prompt nothing at all — the readout sat at 0/0 and the
     // gun just clicked, which reads as a jam rather than as being out.
@@ -146,9 +181,10 @@ export class HUD {
       this.el.reloadHint.classList.toggle('hidden', !hint);
     }
 
-    this.slotEls.forEach((el, i) => {
-      el.classList.toggle('active', i === ws.index);
-      el.style.opacity = ws.weapons[i].unlocked ? '' : '0.25';
+    this.slotEls.forEach((s, i) => {
+      this._flag(s, 'active', i === ws.index);
+      const o = ws.weapons[i].unlocked ? '' : '0.25';
+      if (s._opacity !== o) { s._opacity = o; s.style.opacity = o; }
     });
 
     // crosshair opens up with spread
@@ -164,22 +200,22 @@ export class HUD {
       this.el.crosshair.style.opacity = scoped ? '0' : '';
     }
 
-    this.el.nadeCount.textContent = game.nades;
-    this.el.nades.classList.toggle('empty', game.nades === 0);
+    this._text(el.nadeCount, String(game.nades));
+    this._flag(el.nades, 'empty', game.nades === 0);
 
     // fuse readout while a frag is being cooked
     const cooking = game.cookStart >= 0;
-    this.el.cookBar.classList.toggle('hidden', !cooking);
+    this._flag(el.cookBar, 'hidden', !cooking);
     if (cooking) {
       const left = Math.max(0, 1 - (game.time - game.cookStart) / game.fuseLength);
-      this.el.cookFill.style.width = left * 100 + '%';
-      this.el.cookFill.classList.toggle('hot', left < 0.35);
+      this._width(el.cookFill, left);
+      this._flag(el.cookFill, 'hot', left < 0.35);
     }
 
     const boss = game.boss;
     const bossUp = !!boss && boss.alive;
-    this.el.bossBar.classList.toggle('hidden', !bossUp);
-    if (bossUp) this.el.bossFill.style.width = Math.max(0, (boss.hp / boss.maxHp) * 100) + '%';
+    this._flag(el.bossBar, 'hidden', !bossUp);
+    if (bossUp) this._width(el.bossFill, Math.max(0, boss.hp / boss.maxHp));
 
     this.captureState({
       locked: game.input.locked,
@@ -189,7 +225,12 @@ export class HUD {
 
     this.objective(game);
     this._radioTick(game.time);
-    this.drawRadar(game);
+    // the radar is a canvas drawn whole: thirty times a second is all a
+    // sweep and a few dots need, and a frame split into steps drew it each
+    if (!(game.time - this._radarAt < RADAR_EVERY && game.time >= this._radarAt)) {
+      this._radarAt = game.time;
+      this.drawRadar(game);
+    }
   }
 
   /**

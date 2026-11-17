@@ -92,6 +92,8 @@ const MAX_FRAME = 0.2;
 const FOOTFALL_RANGE = 26;
 /** …how many of them play in any quarter second… */
 const FOOTFALL_VOICES = 4;
+/** How near a building's cache is drawn, m; past it, it is behind walls. */
+export const CACHE_SHOW = 40;
 /** …and the feet height above which it is on a prop, not the ground (every floor is under it). */
 const DECK_HEIGHT = 0.55;
 /** The hemisphere light under the sky's environment… */
@@ -1935,8 +1937,17 @@ class Game {
   updatePickups(dt) {
     // the halos breathe together, which is what makes one catch the eye
     if (this.haloMats) for (const m of this.haloMats) m.opacity = 0.27 + 0.1 * Math.sin(this.time * 3.1);
+    const me = this.player.position;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
+      // a cache lies inside a building, and past CACHE_SHOW it is behind
+      // walls from anywhere it could be seen: drawn there it is three or four
+      // draw calls a pass, in the scene and both shadow maps, for nothing
+      if (p.cache) {
+        const sx = p.mesh.position.x - me.x, sz = p.mesh.position.z - me.z;
+        p.mesh.visible = sx * sx + sz * sz < CACHE_SHOW * CACHE_SHOW;
+        if (!p.mesh.visible) continue;
+      }
       p.mesh.rotation.y += dt * 1.6;
       const bob = Math.sin((this.time + p.born) * 2.4) * 0.07;
       p.mesh.position.y = p.floor + 0.42 + bob;

@@ -15,6 +15,9 @@
  * shots (`footfall`).
  */
 import { makeRandom } from './rng.js';
+
+/** Placed sounds share a panner within `cell` metres; `keep` places at most. */
+export const PANNER = { cell: 1.5, keep: 48 };
 class Audio {
   constructor() {
     this.ctx = null;
@@ -98,17 +101,35 @@ class Audio {
    */
   _out(at) {
     if (!at) return this.master;
-    const p = this.ctx.createPanner();
-    p.panningModel = 'HRTF';
-    p.distanceModel = 'inverse';
-    p.rolloffFactor = 0;            // loudness is the caller's distance gain
+    // A panner is kept for each place sounds come from, to PANNER.cell, and
+    // reused: a fight is a few dozen places, and a new HRTF panner for every
+    // shot, step and impact was the largest piece of the game step after
+    // the hostiles themselves. It is put exactly where the new sound is, so
+    // nothing is heard anywhere but where it happened.
+    // a panner belongs to the context it was made in: a check that plays
+    // offline and puts the live context back must not be handed one
+    if (this.pannerCtx !== this.ctx) { this.pannerCtx = this.ctx; this.panners = new Map(); }
+    const key = `${Math.round(at.x / PANNER.cell)},${Math.round(at.y / PANNER.cell)},${Math.round(at.z / PANNER.cell)}`;
+    let p = this.panners.get(key);
+    if (p) {
+      this.panners.delete(key);     // to the back: most recently used
+    } else {
+      p = this.ctx.createPanner();
+      p.panningModel = 'HRTF';
+      p.distanceModel = 'inverse';
+      p.rolloffFactor = 0;          // loudness is the caller's distance gain
+      p.connect(this.master);
+      // the oldest place is forgotten, not cut off: anything still sounding
+      // through it plays out, and it goes when that does, as every panner did
+      if (this.panners.size >= PANNER.keep) this.panners.delete(this.panners.keys().next().value);
+    }
+    this.panners.set(key, p);
     if (p.positionX) {
       const t = this.ctx.currentTime;
       p.positionX.setValueAtTime(at.x, t); p.positionY.setValueAtTime(at.y, t); p.positionZ.setValueAtTime(at.z, t);
     } else {
       p.setPosition(at.x, at.y, at.z);
     }
-    p.connect(this.master);
     return p;
   }
 
