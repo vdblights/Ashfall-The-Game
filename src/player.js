@@ -29,6 +29,7 @@ export const PAD_KEYS = {
   13: 'KeyM',        // d-pad down: mute
   14: 'KeyQ',        // d-pad left: lean left, or a tap cycles the weapon
   15: 'KeyE',        // d-pad right: lean right, or a tap works a door
+  11: 'KeyL',        // right stick click: the weapon light
 };
 const PAD_DEAD = 0.18;
 const PAD_LOOK = 3.4;          // radians a second at full deflection

@@ -153,6 +153,7 @@ scale had no initial value.
 | `F` / `V` | Melee bash |
 | `E` (tap) | Get into or out of the pickup, or open or close a door in front of you |
 | `W` `S` / `A` `D` / `Space` (in the pickup) | Drive / steer / brake |
+| `L` | Weapon light — it lights the street, and you |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
@@ -170,6 +171,7 @@ Xbox or PlayStation pad:
 | Right bumper / left bumper | Melee / frag (hold to cook) |
 | D-pad left / right | Lean (hold), or tap to switch weapon / work a door |
 | D-pad up / down | Marksman rifle / mute |
+| Right stick click | Weapon light |
 | View | Armoury, between waves |
 | Menu | Pause; A or Menu presses the button on any screen |
 
@@ -346,6 +348,19 @@ ways: a hostile sees half as far as it does on a clear day, so its
 marksmen lose most of their reach, and so do you. The storm builds over the
 first seconds of its wave and clears when the sector does. Rain does not
 fall inside a building.
+
+## Night
+
+The third wave, and every fourth after it, comes after dark. The sun goes
+down behind the ash, the sky goes to slate and the haze goes black with it,
+and what is left to see by is the fire barrels, the hostiles' red lenses and
+the marksmen's lasers. `L` puts a light on your gun that throws a beam down
+the street in front of you, and it is the whole of the wave: in the dark a
+hostile sees about a third as far as it does by day, until your light is on,
+or your muzzle has flashed in the last second and a half, and then it sees
+you as well as it ever does. Leave it off and move, put it on to find them
+and take it off again, and choose your shots. Night lifts when the sector is
+clear.
 
 ## The operation
 
@@ -791,6 +806,7 @@ src/story.js        Operation ASHFALL: the briefing, the acts, the plan, the rad
 src/grenades.js     thrown frags: fuse, bounce physics, detonation
 src/barrels.js      fire barrels: shot, fused, blown, chained, left a stump
 src/glass.js        the panes still in the windows, and their shards
+src/night.js        night waves: the dark, and the light on your gun
 src/effects.js      pooled tracers, impacts, blood, casings, explosions
 src/textures.js     canvas-painted textures (asphalt, facades, rust, cloth, sky)
 src/shapes.js       chamfers, lofts, side profiles, lathes, creased normals, merging

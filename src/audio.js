@@ -222,6 +222,9 @@ class Audio {
     this._tone('sine', 90, 50, 0.10, 0.16, 0, out);
   }
 
+  /** The weapon light's switch: a click on the rail. */
+  lightClick() { if (this.ctx) { this._noise(0.025, 'highpass', 4200, 1, 0.09); this._tone('square', 2100, 1600, 0.02, 0.05); } }
+
   hitmark() { if (this.ctx) this._tone('square', 1400, 1400, 0.035, 0.09); }
 
   kill() { if (this.ctx) { this._tone('square', 1700, 1200, 0.05, 0.10); this._tone('square', 2300, 1800, 0.06, 0.08, 0.05); } }

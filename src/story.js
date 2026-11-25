@@ -97,6 +97,11 @@ export const RADIO = {
     'Storm front on top of you. Their marksmen are half blind in this. So are you.',
     'Rain again. Close the distance; nothing is hitting anything at range tonight.',
   ],
+  night: [
+    'Light is going, WREN. They cannot see you in this any better than you can see them, until you show them where you are.',
+    'Dark over Carrow. Your light finds them, and it tells every one of them where you are. Use it like a round.',
+    'Night again. Every shot you fire is a flare. Pick them.',
+  ],
   clear: [
     'Street is quiet. Breathe. The armoury is open if you have the scrip.',
     'That is the wave. Rearm while you can.',

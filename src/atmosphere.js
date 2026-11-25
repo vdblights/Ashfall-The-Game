@@ -205,7 +205,8 @@ export function installAtmosphere() {
       // the air is lit like the horizon behind it: rays aimed down still
       // look out through dust at eye level, not into the ground
       vec3 fogDir2 = normalize(vec3(fogDir.x, max(fogDir.y, 0.0) * 0.5 + 0.02, fogDir.z));
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, ashAtmosphere(fogDir2, 0.35), fogFactor);
+      // fog.color is white by day; a night wave darkens it (night.js)
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, ashAtmosphere(fogDir2, 0.35) * fogColor, fogFactor);
     #endif
   `;
 }
@@ -312,6 +313,7 @@ const CLOUD_GLSL = /* glsl */`
 
 const SKY_FRAG = /* glsl */`
   uniform float disc;
+  uniform float night;        // 0 day .. 1 a night wave: the dome goes to slate
   varying vec3 vDir;
   ${ATMOSPHERE_GLSL}
   ${CLOUD_GLSL}
@@ -326,7 +328,12 @@ const SKY_FRAG = /* glsl */`
     // survives being looked at from under the brim of a building.
     float mu = dot(d, ASH_SUN);
     float edge = smoothstep(0.99994, 0.99997, mu);
-    col += ${rgb(SUN_COLOR)} * edge * 38.0 * disc;
+    col += ${rgb(SUN_COLOR)} * edge * 38.0 * disc * (1.0 - night);
+    // after dark the ash keeps a little of the city's fires on its underside
+    // low down, and nothing of the sky above
+    vec3 dark = vec3(0.045, 0.05, 0.075) * (1.0 - 0.6 * smoothstep(0.0, 0.5, d.y))
+      + vec3(0.06, 0.03, 0.012) * (1.0 - smoothstep(-0.05, 0.18, d.y));
+    col = mix(col, dark, night);
 
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
@@ -337,7 +344,7 @@ const SKY_FRAG = /* glsl */`
 /** The dome's material. `disc` is 0 when the dome is rendered into the environment. */
 export function skyMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: { disc: { value: 1 }, cloudLow: { value: 0 }, storm: { value: 0 } },
+    uniforms: { disc: { value: 1 }, cloudLow: { value: 0 }, storm: { value: 0 }, night: { value: 0 } },
     vertexShader: SKY_VERT,
     fragmentShader: SKY_FRAG,
     side: THREE.BackSide,
