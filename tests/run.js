@@ -5689,6 +5689,158 @@ check('a storm wave brings rain and wind, halves how far anything sees, and clea
   return r;
 });
 
+check('a night wave is dark, the weapon light shows you the street, and it shows you to them', { weight: 2.5 }, async (page) => {
+  // Night waves (night.js) are the storm's pattern again: a level that falls
+  // and lifts on game time, turning intensities, uniforms and the fog's
+  // colour, and folded into `game.sight` where every hostile reads it. What
+  // plays is the trade: in the dark a raider 40 m off does not see you, with
+  // your light on it does, and for a moment after every shot it does. The
+  // light is a spot that never leaves the scene, so switching it compiles
+  // nothing. In frames: night is dark, and the beam lights what it points at.
+  const r = await page.evaluate(async () => {
+    const g = window.__game;
+    const { PAD_KEYS } = await import('/src/player.js');
+    g.startRun();
+    const quiet = () => { g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false; };
+    quiet();
+    const run = (s) => { for (let i = 0; i < s * 60; i++) { g.time += 1 / 60; g.step(1 / 60); quiet(); } };
+    const schedule = [];
+    for (let w = 1; w <= 20; w++) if (g.night.begin(w)) schedule.push(w);
+    let both = 0;
+    for (let w = 1; w <= 200; w++) if (g.night.begin(w) && g.storm.begin(w, g.time)) both++;
+    g.night.reset(); g.storm.reset();
+
+    // wave 3, after dark
+    g.wave = 2;
+    const banners = [];
+    const banner = g.hud.banner.bind(g.hud);
+    g.hud.banner = (t, sub) => { if (/^WAVE/.test(t)) banners.push(sub); banner(t, sub); };
+    g.startWave(); quiet();
+    const { target: spot, px, pz } = window.__place(40);
+    g.player.reset(px, pz);
+    const keep = g.spawnEnemy('scavenger');
+    keep.pos.set(spot.x + 200, 0, spot.z + 200); keep.update = () => {};
+    g.startWave = () => {};
+    const fell = [];
+    for (let k = 0; k < 4; k++) { run(2.5); fell.push(+g.night.level.toFixed(2)); }
+
+    const seen = () => {
+      const e = g.spawnEnemy('raider');
+      e.pos.set(spot.x, 0, spot.z); e.group.position.copy(e.pos);
+      e.nextFire = 1e9; e.alerted = false;
+      e.update(1 / 60, g.time, g.player, g.world);
+      const saw = e.alerted;
+      e.alive = false; g.scene.remove(e.group);
+      g.enemies.splice(g.enemies.indexOf(e), 1);
+      return saw;
+    };
+    const dark = seen();
+    // the light, on its key: the street sees you
+    g.input.onKey('KeyL');
+    const lightOn = g.night.lightOn;
+    run(0.1);
+    const lit = seen();
+    g.input.onKey('KeyL');
+    run(0.1);
+    const darkAgain = seen();
+    // one shot in the dark, through the game's own trigger
+    g.weapons.select(0, g.time); run(0.6);
+    g.input.fire = true; run(1 / 60); g.input.fire = false;
+    const shot = g.night.lastShot === g.time || g.time - g.night.lastShot < 0.1;
+    run(0.2);
+    const flash = seen();
+    run(2);
+    const afterFlash = seen();
+
+    // a minute of night, the light switched every second, and not one draw
+    const m1 = Math.random.mark();
+    for (let i = 0; i < 3600; i++) {
+      g.time += 1 / 60; g.night.update(1 / 60);
+      if (i % 60 === 0) g.night.toggle();
+      g.night.apply(g);
+    }
+    if (g.night.lightOn) g.night.toggle();
+    const pureNight = Math.random.mark() === m1;
+    const full = {
+      sun: +(g.sun.intensity / g.sunBase).toFixed(3),
+      sky: g.sky.material.uniforms.night.value,
+      fog: +g.scene.fog.color.r.toFixed(3),
+      env: +g.scene.environmentIntensity.toFixed(3),
+    };
+    const padKey = PAD_KEYS[11];
+
+    // dawn with the sector clear
+    keep.alive = false;
+    run(10);
+    g.night.apply(g);
+    const after = { level: g.night.level, fog: g.scene.fog.color.r, sight: g.sight };
+    const day = seen();
+    return { schedule, both, banner: banners.at(-1), fell, dark, lightOn, lit, darkAgain, shot, flash, afterFlash, pureNight, full, after, day, padKey };
+  });
+
+  // in frames: day, night, and night with the beam on
+  const f = await page.evaluate(() => {
+    const g = window.__game;
+    g.applyQuality('high');
+    g.renderer.setPixelRatio(g.renderer.getPixelRatio() / 2);
+    g.resize();
+    const gl = g.renderer.getContext();
+    const p = g.player;
+    p.reset(-17, 26);
+    p.yaw = 0; p.pitch = -0.28;
+    window.__step(0.05);
+    const frame = (level, on) => {
+      g.night.level = g.night.target = level;
+      g.night.lightOn = on;
+      g.sun.intensity = g.sunBase; g.hemi.intensity = g.hemiBase;
+      g.night.apply(g);
+      g.render();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      // the whole frame, and the middle where the beam lands
+      let all = 0, mid = 0, nm = 0;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4, l = px[i] * 0.3 + px[i + 1] * 0.5 + px[i + 2] * 0.2;
+        all += l;
+        if (Math.abs(x - w / 2) < w * 0.12 && y > h * 0.25 && y < h * 0.5) { mid += l; nm++; }
+      }
+      return { all: all / (w * h), mid: mid / nm, programs: g.renderer.info.programs.length };
+    };
+    const day = frame(0, false);
+    const night = frame(1, false);
+    const beam = frame(1, true);
+    const back = frame(1, false);
+    g.night.reset(); g.night.apply(g);
+    const r = (v) => +v.toFixed(1);
+    return {
+      day: r(day.all), night: r(night.all), dayMid: r(day.mid), nightMid: r(night.mid), beamMid: r(beam.mid),
+      compiled: beam.programs - night.programs + back.programs - beam.programs,
+    };
+  });
+  Object.assign(r, { frames: f });
+
+  expect(r.schedule.join() === '3,7,11,15,19', `nights come on waves ${r.schedule.join(', ')}`);
+  expect(r.both === 0, `${r.both} waves were both a storm and a night`);
+  expect(/NIGHT/.test(r.banner), `the wave's banner says ${r.banner}`);
+  expect(r.fell[0] > 0 && r.fell[0] < 1 && r.fell[3] === 1, `night fell ${r.fell.join(' → ')} over ten seconds`);
+  expect(r.full.sun < 0.1 && r.full.sky === 1 && r.full.fog < 0.2 && r.full.env < 0.2,
+    `at full dark: sun ${r.full.sun}x, sky ${r.full.sky}, fog colour ${r.full.fog}, environment ${r.full.env}`);
+  expect(r.pureNight, 'a night drew on the seeded stream');
+  expect(r.padKey === 'KeyL', `the right stick's click is ${r.padKey}`);
+  expect(!r.dark, 'a raider 40 m off saw you in the dark with your light off');
+  expect(r.lightOn && r.lit, `with the light on (${r.lightOn}) a raider 40 m off ${r.lit ? 'saw' : 'did not see'} you`);
+  expect(!r.darkAgain, 'switched off, the light still gave you away');
+  expect(r.shot && r.flash, `a shot (${r.shot}) ${r.flash ? 'gave' : 'did not give'} you away a fifth of a second later`);
+  expect(!r.afterFlash, 'two seconds after the shot you were still seen in the dark');
+  expect(r.after.level === 0 && r.after.fog === 1 && r.after.sight === 1 && r.day,
+    `ten seconds after the sector cleared: level ${r.after.level}, fog ${r.after.fog}, sight ${r.after.sight}, seen ${r.day}`);
+  expect(r.frames.night < r.frames.day * 0.3, `night is ${r.frames.night} against a day of ${r.frames.day}`);
+  expect(r.frames.beamMid > r.frames.nightMid * 3, `the beam lights the street ahead to ${r.frames.beamMid}, against ${r.frames.nightMid} without it`);
+  expect(r.frames.compiled === 0, `switching the light compiled ${r.frames.compiled} programs`);
+  return r;
+});
+
 check('the air carries the light: shafts from the sun, ash on what faces up, heat over a fire', { weight: 2.6 }, async (page) => {
   // Three things in the air, each a pass that is easy to get quietly wrong.
   // Light shafts are blurred out of the sky round the sun and added in the

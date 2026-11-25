@@ -80,6 +80,7 @@ builds, never to play.
 | `src/truck.js` | The pickup: parked by the insertion point, driven, rams, crashes, burns, and the chase camera over it |
 | `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
 | `src/storm.js` | Storm waves: which waves bring one, the rain, the wind, the haze and the lightning, and how far a hostile sees in it |
+| `src/night.js` | Night waves: which waves come after dark, the dark itself, the weapon light, and how far a hostile sees you by it |
 | `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
 | `src/textures.js` | Every texture, painted to canvas at boot |
@@ -1158,6 +1159,35 @@ These each cost real debugging time. Changing them needs a reason.
   the sight factor left out (a raider 40 m off sees you in the storm),
   the roof test taken out (rain changes 3.28% of a frame inside a shop,
   against 0.51%), and `Math.random` in the lightning.
+- **A night is the storm's pattern, and the light is a spot that never
+  leaves.** The third wave and every fourth after it (`nightFor`, which
+  never meets `stormFor`) come after dark: `Night` in `night.js` falls
+  over `NIGHT.ramp` seconds from `startWave` and lifts once the sector is
+  clear, and `apply`, run in `frame` after the storm's, multiplies what
+  the storm set — the sun, the hemisphere — and sets the environment's
+  intensity, the cool fill and the bounce (`dayLights`), the gun's own
+  lights (`viewLights`), the smoke columns' sunlit side, the sky's
+  `night` uniform (the dome to slate, the disc gone) and the fog's
+  colour. **The fog's colour is a factor now**: the fog chunk
+  (`atmosphere.js`) mixes toward `ashAtmosphere(...) * fogColor`, and
+  `scene.fog` is white by day, so nothing moved by day and the haze, the
+  rain and the ash all darken at night through the uniform three hands
+  every material that takes fog. **The weapon light** (`L`, or the right
+  stick's click) is a `SpotLight` built at boot in the storm's stage,
+  inside a `reserve`, before the shader warm-up, and kept visible at
+  intensity 0 while it is off: the count of lit spots is in every lit
+  program's key, and switching it by `visible` compiled a program a
+  switch. **The one reader is sight again**: `step` sets `game.sight`
+  to the storm's sight times `night.sight(time)`, which is
+  `NIGHT.sight` (a third) at full dark, unless the light is on or the
+  player fired in the last `NIGHT.flash` seconds (`night.fired`, from the
+  trigger in `step`) — then 1, and the dark gives you nothing. Nothing
+  draws on `Math.random`. `a night wave is dark, the weapon light shows
+  you the street, and it shows you to them` fails with the night left
+  out of `game.sight` (a raider 40 m off sees you in the dark), with the
+  light not counted (it does not see you lit), with the shot not
+  recorded, with the spot switched by `visible` (a program compiled),
+  and with the dark taken out.
 - **A controller is a keyboard with two sticks.** `Input.pollPad` in
   `player.js` reads the first gamepad with the standard mapping once a
   frame, from `frame` before the steps, as the mouse is read. Every
@@ -2932,6 +2962,22 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The night pass was the second of three features asked for in one line
+("do 6 then 1 and 2": the pickup, then night operations, then the depot).
+It is the storm's pattern again (invariant above), and the thing worth
+keeping is how little it had to add: every light and the fog already had
+an owner keeping a base, so night is factors on those bases and one more
+term in `game.sight`. Two things only a frame showed. The first night was
+too dark to play, a black frame with the beam in it, so the hemisphere and
+the environment keep a sixth and a tenth of the day. And the smoke columns
+stood lit against a night sky, because their sunlit side is a uniform of
+their own and not a light; night scales it too. The fog's colour became a
+factor (white by day) rather than a new uniform, so the haze, the rain and
+the ash darken together without a material learning anything. Nothing is
+drawn that was not before but the spot, which is in the scene at nothing
+from boot, so the layout, the prints and the mark after boot are unchanged
+and every neighbouring look check passed alongside it.
 
 The pass after the performance squeeze was the first of three features asked
 for together: a pickup you can drive. Two things worth keeping. A thing

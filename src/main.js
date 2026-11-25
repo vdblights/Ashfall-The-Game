@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { buildCity, CITY_PAINT, placeDoor, DOOR_OPEN, SECTOR, outskirtsHeight } from './city.js';
 import { Ashfall, settleAsh } from './ash.js';
 import { Storm } from './storm.js';
+import { Night } from './night.js';
 import { LoadingScreen, yieldToPaint } from './loading.js';
 import { bindScreens, showScreen } from './screens.js';
 import { Player, Input, LEAN } from './player.js';
@@ -154,7 +155,9 @@ class Game {
     // Height fog: `fogDensity` is its density at street level, and it thins
     // with height (see atmosphere.js). The colour is not this one — it is the
     // sky's own horizon in whichever direction you are looking.
-    this.scene.fog = new THREE.FogExp2(0x8a6748, 0.0050);
+    // the fog's colour is a factor on the sky's own (atmosphere.js): white by
+    // day, darkened by a night wave (night.js)
+    this.scene.fog = new THREE.FogExp2(0xffffff, 0.0050);
     this.fogBase = this.scene.fog.density;     // a storm thickens it from here
     this.baseFov = 78;
     this.camera = new THREE.PerspectiveCamera(this.baseFov, innerWidth / innerHeight, 0.06, 600);
@@ -162,13 +165,16 @@ class Game {
     // ---- view-model scene (drawn on top so the gun never clips) ----------
     this.viewScene = new THREE.Scene();
     this.viewCamera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 12);
-    this.viewScene.add(new THREE.AmbientLight(0xbdac98, 0.85));
+    const vAmb = new THREE.AmbientLight(0xbdac98, 0.85);
+    this.viewScene.add(vAmb);
     const vKey = new THREE.DirectionalLight(0xffdcae, 1.35);
     vKey.position.set(-0.6, 1.2, 0.8);
     this.viewScene.add(vKey);
     const vRim = new THREE.DirectionalLight(0x8fa6c8, 0.75);
     vRim.position.set(0.9, -0.3, -1);
     this.viewScene.add(vRim);
+    // a night wave dims the gun with the street (night.js)
+    this.viewLights = [vAmb, vKey, vRim].map((light) => ({ light, base: light.intensity }));
 
     this.post = new Post(this.renderer);
 
@@ -278,6 +284,9 @@ class Game {
         }));
         // and the rain a storm wave brings, kept out of rooms by the ash's roof map
         this.storm = reserve(() => new Storm(this.scene, this.ashfall.roofs));
+        // and the dark a night wave brings, with the light on your gun; the
+        // light is in the scene from here on, so every program knows it
+        this.night = reserve(() => new Night(this.scene));
       }],
       ['Arming you', 18, () => {
         this.weapons = reserve(() => new WeaponSystem(this.viewScene, this));
@@ -546,6 +555,7 @@ class Game {
     const bounce = new THREE.DirectionalLight(0x8c8072, 0.18);
     bounce.position.set(10, -20, 10);
     this.scene.add(bounce);
+    this.dayLights = [fill, bounce].map((light) => ({ light, base: light.intensity }));
   }
 
   /**
@@ -974,6 +984,10 @@ class Game {
       if (code === 'Digit4') this.weapons.select(3, this.time);
       if (code === 'Digit5') this.weapons.select(4, this.time);
       if (code === 'KeyB') this.openArmoury();
+      if (code === 'KeyL' && !this.player.dead) {
+        this.hud.toast(this.night.toggle() ? 'LIGHT ON' : 'LIGHT OFF');
+        audio.lightClick();
+      }
       if (code === 'KeyF' || code === 'KeyV') this.weapons.startMelee(this.time);
       if (code === 'KeyG' && this.cookStart < 0 && this.nades > 0 && !this.player.dead) {
         this.cookStart = this.time;          // pin is out; the fuse is running
@@ -1108,6 +1122,7 @@ class Game {
     this.pushCalled = -1;
     this.runStart = this.time;
     this.storm.reset();
+    this.night.reset();
 
     // The operation: which act it has reached, what has been done for it,
     // and whether the convoy is out — after which the run is endless.
@@ -1176,6 +1191,7 @@ class Game {
   toMenu() {
     this.state = 'menu';
     this.storm.reset();
+    this.night.reset();
     audio.stopAmbience();
     showScreen('pause', false);
     showScreen('gameover', false);
@@ -1188,6 +1204,7 @@ class Game {
   gameOver() {
     this.state = 'dead';
     this.storm.clear();
+    this.night.clear();
     audio.death();
     audio.stopAmbience();
     this.input.exitLock();
@@ -1260,13 +1277,19 @@ class Game {
     const count = this.bossPending ? `${total} HOSTILES &middot; WARLORD` : `${total} HOSTILES`;
     // some waves come in under a storm (storm.js): rain, wind, and half the sight
     const storm = this.storm.begin(w, this.time);
+    // and some after dark (night.js), when a hostile sees you by your light
+    const night = this.night.begin(w);
     const sub = act.opens && !act.endless ? `${act.title} &middot; ${act.name} &middot; ${count}` : count;
-    this.hud.banner('WAVE ' + w, storm ? `${sub} &middot; STORM` : sub);
+    this.hud.banner('WAVE ' + w, storm ? `${sub} &middot; STORM` : night ? `${sub} &middot; NIGHT` : sub);
     if (this.op) this.op.act = act.act;
     if (act.opens && !act.endless) this.say(RADIO.act[act.act]);
     if (w > FINALE) this.say(RADIO.waveEndless, w);
     else if (RADIO.wave[w]) this.say(RADIO.wave[w]);
     if (storm) this.say(RADIO.storm, w);
+    if (night) {
+      this.say(RADIO.night, w);
+      setTimeout(() => this.hud.toast('[L] WEAPON LIGHT — IT SHOWS YOU TOO'), 2400);
+    }
     if (unlocked.length) setTimeout(() => this.hud.toast('WEAPON RECOVERED: ' + unlocked.join(', ')), 1200);
   }
 
@@ -1300,6 +1323,7 @@ class Game {
         if (!this.waveClearedAt) {
           this.waveClearedAt = this.time;
           this.storm.clear();
+          this.night.clear();
           const bonus = 250 * this.wave;
           this.score += bonus;
           this.hud.banner('SECTOR CLEAR', `+${bonus} &middot; B FOR THE ARMOURY`);
@@ -2112,6 +2136,7 @@ class Game {
     if (wind) wind.value = this.time;
     this.updateAsh();
     this.storm.apply(this);
+    this.night.apply(this);
     const rain = Math.round(this.storm.level * 50) / 50;
     if (rain !== this.rainHeard) audio.rain(this.rainHeard = rain);
     this.perf.beforeRender();
@@ -2208,7 +2233,8 @@ class Game {
     // the weather first: how far a hostile sees this step depends on it
     const strike = this.storm.update(dt, this.time);
     if (strike) audio.thunder(strike.gain, strike.delay);
-    this.sight = this.storm.sight;
+    this.night.update(dt);
+    this.sight = this.storm.sight * this.night.sight(this.time);
 
     this.player.update(dt, this.time, input);
     // the pickup after the look, so the camera it puts behind the cab is on
@@ -2224,6 +2250,7 @@ class Game {
     if (input.fire && !this.player.dead && !this.player.mantle && !driving) {   // both hands on the ledge, or the wheel
       const moving = Math.hypot(this.player.velocity.x, this.player.velocity.z) > 2.5;
       if (this.weapons.fire(this.time, this.camera, moving)) {
+        this.night.fired(this.time);      // the flash is seen in the dark
         if (!w.def.auto) input.fire = false;
       } else if (w.mag === 0 && !this.weapons.reloading) {
         // an empty mag reloads; an empty gun reaches for one that still works,
@@ -2428,7 +2455,8 @@ class Game {
     const strength = facing <= 0 ? 0
       : AIR.shafts * THREE.MathUtils.smoothstep(facing, 0.3, 0.8) * Math.max(0, 1 - out / 0.25);
     const fx = this.airFx || (this.airFx = { sun: { x: 0.5, y: 0.5, strength: 0 }, fires: [] });
-    fx.sun.x = u; fx.sun.y = v; fx.sun.strength = strength;
+    // no sun to pour through the dust after dark
+    fx.sun.x = u; fx.sun.y = v; fx.sun.strength = strength * (1 - this.night.level);
 
     fx.fires.length = 0;
     const tanHalf = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
