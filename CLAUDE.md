@@ -77,6 +77,7 @@ builds, never to play.
 | `src/drops.js` | What a hostile drops: the ammunition can, medical case and grenade, and their halos; and the armour plate a building holds |
 | `src/loot.js` | Where the caches in the buildings lie and what each holds, by a hash of the city |
 | `src/grenades.js` | Fuse, flight, bounce, detonation |
+| `src/truck.js` | The pickup: parked by the insertion point, driven, rams, crashes, burns, and the chase camera over it |
 | `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
 | `src/storm.js` | Storm waves: which waves bring one, the rain, the wind, the haze and the lightning, and how far a hostile sees in it |
 | `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
@@ -1079,6 +1080,43 @@ These each cost real debugging time. Changing them needs a reason.
   under it, and asks `stairAt` along it. Drop ladders were offered with
   them and not built: a stairwell building has windows in every face, so
   there is no blank wall on one to hang a ladder from.
+- **The pickup is a collider that moves, and the world hands it to every
+  reader.** One pickup per run (`truck.js`) is parked on the road nearest
+  the insertion point (`findSpot`, read off the city as built, drawing
+  nothing). `E` gets you in and out; `W`/`S`, `A`/`D` and `Space` drive,
+  steer and brake; the view is a chase camera that settles behind the cab
+  when the mouse is still; the gun is put away. Five things are
+  load-bearing. **It is a mover, not a box** (`World.addMover`,
+  `placeMover`): `world.boxes` is indexed once (`World.seal`) and printed
+  by the layout check, so a box that drives cannot live in it. `near()`
+  appends every mover to whatever a reader walks, after the boxes, so
+  `resolve`, `groundHeight`, `blocked`, `lineOfSight` and `bounceSphere` all
+  meet it with no reader learning anything; a mover asking about itself is
+  `off`. The nav grid does not see it, which is the hint rule: a hostile's
+  avoidance steers round it. **The cab is glass** (`_insideMover`): a sight
+  line with either end inside a mover is not stopped by it, so a hostile
+  sees and shoots the driver, and the driver is not hidden by the truck
+  they sit in; symmetric, like every other answer. **The cab takes the
+  round**: while driving, `damagePlayer` gives the truck two-thirds of a
+  hit at twice the weight and you the rest; a fall or a crash goes past it.
+  **It meets the world in pieces** of 0.35 m, three circles down its
+  length, and what drove into a wall stops while what ran along it keeps
+  going; over 4 m/s into a wall it is a crash, hurting the truck and the
+  driver a little. **It runs over what it reaches** past 3.5 m/s
+  (`TRUCK.ram`, `1.4·v²` a hit, credited to the player as PICKUP, a body
+  taking some of the speed), and stops dead against a holdout or a
+  hostile it is too slow to hurt. At 0 hp it throws you out, burns for
+  2.2 s and blows through `Game.explode`. Everything it is was built in
+  the 'Arming you' stage inside a `reserve` and pays nothing, so the
+  layout, the prints and the mark after boot are unchanged; it is dressed
+  for the low tier and shown to the boot compile like everything else.
+  `a pickup can be driven` parks, enters, drives a clear 40 m of road,
+  runs a scavenger down, takes a round in the cab, drives into a building
+  at 13 m/s, gets out, burns it and starts a new run. It fails with the
+  movers left out of `near()` (a parked truck stops no body or sight
+  line), the cab not glass (the driver unseen), the ram a no-op, the truck
+  not a raycast target, and the cab not taking the round (40 to the
+  player, 0 to the truck).
 - **A scope is looked through.** The M110 (`dmr`, slot 5) is bought in the
   armoury for 3,000 scrip and never found; the armoury's `dmr` item unlocks
   it and fills it. It is the carbine's receiver with a heavier barrel, a
@@ -2894,6 +2932,21 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The pass after the performance squeeze was the first of three features asked
+for together: a pickup you can drive. Two things worth keeping. A thing
+that moves cannot join `world.boxes` without moving the seal, the prints
+and every reader's order, so it joins the readers instead, at `near()`,
+and every reader met it the first time with nothing changed in it. And a
+clear straight road is rare in this city: streets hold wrecks, containers
+and streetlights, so a check that drives has to find its 40 m first, and
+in play the truck crashes on the way out of its bay as often as not, which
+is the city working. What it cost was not timed: it is one wreck's worth
+of meshes in the scene and one mover in every reader's walk, and while you
+drive the route field is rebuilt at most every 0.4 s rather than on every
+cell crossed, because at 17 m/s that is ten cells a second. The checks
+that count draw calls, programs, the shadow cache and the layout pass
+with it parked.
 
 The pass after the menus came from one line: any more gameplay
 performance we can squeeze? Profiled in a fight with twelve hostiles on

@@ -173,8 +173,12 @@ export class HUD {
       else if (ws.anyArmed) hint = 'OUT OF AMMO — SWITCH WEAPON';
       else hint = 'NO AMMO — [F] TO MELEE';
     }
-    // a door in reach, when nothing about the gun needs saying
+    // a door in reach, when nothing about the gun needs saying, and the
+    // pickup; at the wheel it is all the hint there is, and no crosshair
     if (!hint && game.doorHint) hint = game.doorHint;
+    const driving = !!p.vehicle;
+    if (game.truck?.hint && (driving || !hint)) hint = game.truck.hint;
+    this._flag(this.el.crosshair, 'hidden', driving);
     if (hint !== this._hint) {      // this runs every frame; do not churn the DOM
       this._hint = hint;
       this.el.reloadHint.textContent = hint;

@@ -50,8 +50,20 @@ export const HEADROOM = 1.9;
  * calls a reader on a box list of its own.
  */
 function near(world, x0, z0, x1, z1) {
-  if (!world._cells || world._sealed !== world.boxes.length) return world.boxes;
-  return world._near(x0, z0, x1, z1);
+  const base = !world._cells || world._sealed !== world.boxes.length ? world.boxes : world._near(x0, z0, x1, z1);
+  const movers = world.movers;
+  if (!movers.length) return base;
+  // A collider that drives (`addMover`) is not in the list or the index,
+  // which are both built once; it is handed to every reader here, after
+  // everything else, so the boxes it joins come back in the order they
+  // always did. One that is asking about itself is `off`.
+  let out = base;
+  for (const m of movers) {
+    if (m.off || m.maxX < x0 || m.minX > x1 || m.maxZ < z0 || m.minZ > z1) continue;
+    if (out === world.boxes) out = world.boxes.slice();
+    out.push(m);
+  }
+  return out;
 }
 
 export class World {
@@ -83,7 +95,42 @@ export class World {
     this.floors = [];
     // every window opening in a ruin's walls, as a hole through it
     this.ruinWindows = [];
+    /**
+     * Colliders that move about the sector — the pickup. Outside `boxes`,
+     * which the index, the route field, the layout prints and the roof map
+     * are all built from once; every reader gets them through `near`.
+     */
+    this.movers = [];
     this.bounds = 100;
+  }
+
+  /**
+   * Register a collider that drives: a turned box from the ground to `top`,
+   * placed by `placeMover`. To a body, a grenade, a footing and a sight line
+   * it is a box like a parked wreck, wherever it has got to.
+   */
+  addMover(hx, hz, top) {
+    const b = { minX: 0, maxX: 0, minZ: 0, maxZ: 0, top, base: 0, cx: 0, cz: 0, hx, hz, cos: 1, sin: 0, mover: true, off: false, y: 0, height: top };
+    this.movers.push(b);
+    this.placeMover(b, 0, 0, 0, 0);
+    return b;
+  }
+
+  /** Move a mover to (x, z), turned `rot` as `addRotatedBox` turns, its floor at `y`. */
+  placeMover(b, x, z, rot, y = 0) {
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    const ex = Math.abs(b.hx * cos) + Math.abs(b.hz * sin);
+    const ez = Math.abs(b.hx * sin) + Math.abs(b.hz * cos);
+    b.cx = x; b.cz = z; b.cos = cos; b.sin = sin;
+    b.minX = x - ex; b.maxX = x + ex; b.minZ = z - ez; b.maxZ = z + ez;
+    b.top = y + b.height; b.y = y;
+  }
+
+  /** Whether a point is inside a mover's footprint and under its roof. */
+  _insideMover(b, x, y, z) {
+    if (y > b.top || y < b.y - 0.2) return false;
+    const rx = x - b.cx, rz = z - b.cz;
+    return Math.abs(b.cos * rx - b.sin * rz) <= b.hx && Math.abs(b.sin * rx + b.cos * rz) <= b.hz;
   }
 
   addBox(minX, minZ, maxX, maxZ, top, base = 0) {
@@ -574,9 +621,13 @@ export class World {
       // A door's bound is everything it sweeps, so a door always asks. A
       // fallen slab's top is its high edge, and over its foot that is a
       // metre or two of air, so it asks its own plane.
+      // A sight line to or from someone sitting in a mover is not stopped
+      // by the mover: the cab is glass. Asked of both ends, so it is as
+      // symmetric as every other answer here.
+      if (box.mover && (this._insideMover(box, ax, ay, az) || this._insideMover(box, bx, by, bz))) continue;
       if (box.ramp) {
         if (!this._blockedByRamp(box, ax, ay, az, dx, dy, dz)) continue;
-      } else if ((box.sin !== 0 || box.door) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
+      } else if ((box.sin !== 0 || box.door || box.mover) && !this._blockedByFootprint(box, ax, ay, az, dx, dy, dz)) continue;
 
       return false;
     }

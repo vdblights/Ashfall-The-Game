@@ -367,6 +367,7 @@ export class Player {
     this.stepTimer = 0;
     this.shake = 0;
     this.mantle = null;
+    this.vehicle = null;
     this.climbLean = 0;
     this.slide = null;
     this.slideRest = 0;
@@ -447,6 +448,21 @@ export class Player {
       this.position.y = this.feetY + this.eyeHeight;
       this.camera.position.copy(this.position);
       this.camera.rotation.set(this.pitch * 0.4, this.yaw, 0.55, 'YXZ');
+      return;
+    }
+
+    // At the wheel the truck owns the body and the camera (`truck.js`): the
+    // look above still turns the view, and nothing else of a body on foot
+    // happens, but a wound still knits.
+    if (this.vehicle) {
+      this.lean = 0;
+      this.leanOffset.set(0, 0, 0);
+      this.slide = null;
+      this.crouching = this.sprinting = false;
+      this.stamina = Math.min(1, this.stamina + dt * 0.3);
+      if (time - this.lastDamageTime > 5 && this.health < this.maxHealth) {
+        this.health = Math.min(this.maxHealth, this.health + dt * 9);
+      }
       return;
     }
 
