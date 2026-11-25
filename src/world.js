@@ -52,7 +52,7 @@ export const HEADROOM = 1.9;
 function near(world, x0, z0, x1, z1) {
   const base = !world._cells || world._sealed !== world.boxes.length ? world.boxes : world._near(x0, z0, x1, z1);
   const movers = world.movers;
-  if (!movers.length) return base;
+  if (!movers || !movers.length) return base;
   // A collider that drives (`addMover`) is not in the list or the index,
   // which are both built once; it is handed to every reader here, after
   // everything else, so the boxes it joins come back in the order they

@@ -6028,6 +6028,10 @@ check('weeds grow where they can stand, and stay off the low tier', async (page)
   const r = await page.evaluate(() => {
     const g = window.__game;
     const W = g.world;
+    // what drives (the pickup) parks wherever it was left, over a weed or
+    // not; this asks about the city the weeds were grown in
+    const movers = W.movers;
+    W.movers = [];
     let tufts = 0, floating = 0, buried = 0, inside = 0;
     for (const mesh of g.weedMeshes) {
       const p = mesh.geometry.attributes.position;
@@ -6042,6 +6046,7 @@ check('weeds grow where they can stand, and stay off the low tier', async (page)
         if (W.occupied(x, z, 0, 0.6)) inside++;
       }
     }
+    W.movers = movers;
     const inSolids = g.world.solids.some((m) => m.material?.userData?.name === 'weeds');
     g.applyQuality('high');
     const shownHigh = g.weedMeshes.every((m) => m.visible);
