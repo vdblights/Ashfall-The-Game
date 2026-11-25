@@ -80,6 +80,7 @@ builds, never to play.
 | `src/truck.js` | The pickup: parked by the insertion point, driven, rams, crashes, burns, and the chase camera over it |
 | `src/barrels.js` | Fire barrels: shot, fused, blown through `Game.explode`, set off by a blast that sees them, left a stump |
 | `src/storm.js` | Storm waves: which waves bring one, the rain, the wind, the haze and the lightning, and how far a hostile sees in it |
+| `src/depot.js` | The depot's defence for the convoy: sandbags, wire and the mounted gun, raised when the convoy comes and struck when it ends |
 | `src/night.js` | Night waves: which waves come after dark, the dark itself, the weapon light, and how far a hostile sees you by it |
 | `src/glass.js` | The panes still in the windows, what breaks them, and their shards |
 | `src/effects.js` | Pooled tracers, impacts, blood, casings, explosions |
@@ -1118,6 +1119,44 @@ These each cost real debugging time. Changing them needs a reason.
   line), the cab not glass (the driver unseen), the ram a no-op, the truck
   not a raycast target, and the cab not taking the round (40 to the
   player, 0 to the truck).
+- **The depot's defence is bought, raised and struck, and its walls are
+  movers.** From wave 8 (`depotOnShelf` in `armoury.js`: Act III, the
+  operation not yet complete) the armoury sells sandbags, wire and a
+  mounted gun, and only then: the purchase keys run past nine (`Digit0`,
+  `Minus`) and read `shelf(game)`, so what is on sale is what the keys
+  buy. Nothing stands until the convoy starts: `Depot.raise` faces the
+  most open street from the convoy's site, puts the gun 0.8-3.2 m out
+  that way on level floor, and walks a ring of sites for each wall and
+  coil, each on its own floor within 0.45 m of the site's, level along
+  its length, clear of every collider and of the player; `release` of
+  the convoy calls `strike`, and a new run's kit is empty. Four things
+  are load-bearing. **A wall is a mover** (`World.addMover`, the
+  pickup's kind), kept `off` while struck, because `world.boxes` is
+  sealed and printed by the layout check; a round meets it through
+  `depot.meshes`, which `hitscan` asks beside the solids. It is a metre
+  high, so you see and fire over it. **Wire is no collider**: `snare`
+  reads every hostile against every coil each step, sets `snaredUntil`,
+  which `Enemy.update` reads as `WIRE_SLOW` (0.35) on its pace, and
+  cuts it in ticks through `damage` with a point and a direction, which
+  `effects.blood` needs (it threw without them, which the check found);
+  a kill is the player's as WIRE. **The gun is a seat**
+  (`player.vehicle` with `gun` set): `Player.update` gives up the body
+  to it as it does to the pickup, the mouse traverses within
+  `DEPOT.gun.traverse` of its facing, rounds go through `hitscan` from
+  its muzzle (`from`) as an M240 (`GUN_DEF`), and the barrel heats a
+  share a round and will not fire hot until it has cooled to `recover`.
+  `damagePlayer` asks `shelterFrom`: the shield takes 0.6 of what comes
+  from within `front` of the aim and nothing from behind. The objective
+  column is hidden while you are on the gun, or the view was tinted
+  through it. **Everything is built at boot in 'Arming you', inside a
+  `reserve`**, dressed for low and shown to the boot compile, so it
+  draws nothing from the stream and the layout and mark are unchanged.
+  `the depot is fortified for the convoy` fails with the walls not a
+  raycast target (a round through a wall), the snare a no-op (the
+  hostile moves as far as it does free, uncut), `WIRE_SLOW` at 1 (cut,
+  not slowed), the shield ignored (14 in front, 14 behind), the shelf
+  open early (3 depot items at wave 4), the kit not struck, and no heat
+  (never hot, five rounds fired at the limit).
 - **A scope is looked through.** The M110 (`dmr`, slot 5) is bought in the
   armoury for 3,000 scrip and never found; the armoury's `dmr` item unlocks
   it and fills it. It is the carbine's receiver with a heavier barrel, a
@@ -2962,6 +3001,19 @@ the repo's pull request list answer it exactly and cannot go stale.
 What holds regardless: `npm test` is the contract, every check in it was
 confirmed to fail against what it guards before being kept, and the list at
 the end of this section is what to do next rather than what was left undone.
+
+The depot pass was the third of the three ("do 6 then 1 and 2"): Act
+III's convoy comes to a depot you can fortify, with sandbags, wire and a
+mounted gun bought between waves (invariant above). Two things only a
+frame showed. A city street has a kerb under every wall you lay across
+it, so a defence placed on one level stood two of eight walls; each piece
+finds its own floor and a spot near the one it was given. And a gunner's
+view looked through the objective's light column and the convoy sign's
+posts, both green and in the way, so the column hides while you are on
+the gun and the sign turns to face the street. Nothing is drawn that was
+not before until the convoy wave, and everything is built at boot in a
+`reserve`, so the layout, the prints and the mark after boot are
+unchanged.
 
 The night pass was the second of three features asked for in one line
 ("do 6 then 1 and 2": the pickup, then night operations, then the depot).

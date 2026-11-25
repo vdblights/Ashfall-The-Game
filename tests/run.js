@@ -8290,7 +8290,7 @@ check('the armoury opens between waves, costs scrip not score, and what it fits 
   expect(Math.abs(ratio(r.after.spread, r.before.spread) - 0.7) < 0.01, `optics took aimed spread from ${r.before.spread} to ${r.after.spread}`);
   expect(Math.abs(ratio(r.after.dealt, r.before.dealt) - 1.12) < 0.005, `match ammunition took a hit from ${r.before.dealt} to ${r.after.dealt}`);
   expect(r.unaffordable === 'refused' && r.broke > 0, `with ${r.broke} items out of reach a purchase was ${r.unaffordable}`);
-  expect(r.closed === 'playing' && r.fresh === '{"armour":0,"mags":0,"optics":0,"rifling":0,"pouch":0,"dmr":0} 0', `after deploying: ${r.closed}, and a new run starts with ${r.fresh}`);
+  expect(r.closed === 'playing' && r.fresh === '{"armour":0,"mags":0,"optics":0,"rifling":0,"pouch":0,"dmr":0,"sandbags":0,"wire":0,"mg":0} 0', `after deploying: ${r.closed}, and a new run starts with ${r.fresh}`);
   return { bought: r.bought, before: r.before, after: r.after };
 });
 
@@ -9680,7 +9680,7 @@ check('a pickup can be driven: in, down a street, over a hostile, into a wall, a
     const tick = (s) => window.__step(s);
     const keys = g.input.keys;
     const tap = (code) => { g.input.onKeyUp?.(code); };
-    const out = { movers: W.movers.length, spot: { ...T.spot } };
+    const out = { movers: W.movers.filter((b) => !b.off).length, spot: { ...T.spot } };
     const box = T.box;
     const fwd = () => new THREE.Vector3(Math.sin(T.yaw), 0, Math.cos(T.yaw));
     const footprint = (x, z, pad = 0) => {
@@ -9863,6 +9863,183 @@ check('a pickup can be driven: in, down a street, over a hostile, into a wall, a
   expect(r.out && r.outside && r.gunBack, `getting out did not put you beside it: ${JSON.stringify(r)}`);
   expect(r.dead && r.blown && !r.enterDead, `a spent pickup did not burn out: ${JSON.stringify(r)}`);
   expect(r.reset, `a new run did not park it again`);
+  return r;
+});
+
+check('the depot is fortified for the convoy: sandbags to shelter behind, wire that holds them, and a gun you man', { weight: 2 }, async (page) => {
+  // What Act III's armoury sells (`depot.js`): bought from the eve of the
+  // act, raised round the depot when the convoy's objective starts, struck
+  // when it ends. A wall is a mover every reader meets; wire is no collider
+  // but slows and cuts what wades through it, to your credit; the gun is a
+  // seat that fires, overheats, keeps to its arc and shields you in front.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const A = await import('/src/armoury.js');
+    const g = window.__game, W = g.world, p = g.player, D = g.depot;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const tick = (s) => window.__step(s);
+    const tap = (code) => { g.input.onKeyUp?.(code); };
+    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    const out = {};
+    const labels = [];
+    const reg = g.registerHit.bind(g);
+    g.registerHit = (e, res, label, head) => { if (res === 'kill') labels.push(label); return reg(e, res, label, head); };
+
+    // not on the shelf before Act III, and not to be bought there either
+    g.scrip = 999999; g.wave = 4;
+    out.early = A.shelf(g).filter((i) => i.depot).length;
+    out.earlyBuy = A.buy(g, 'mg');
+    g.wave = 8;
+    out.shelf = A.shelf(g).filter((i) => i.depot).map((i) => i.id).join(',');
+    for (const id of ['sandbags', 'sandbags', 'wire', 'wire', 'mg']) A.buy(g, id);
+    out.upBefore = W.movers.filter((b) => (b.sandbags || b === D.gunBox) && !b.off).length;
+
+    const a = g.objectives.start('convoy');
+    out.raised = a && a.fortified;
+    if (!out.raised || !D.gunUp) return out;
+
+    // a wall stops a body, a sight line and a round, and is seen over
+    const wall = D.walls.find((w) => w.up), b = wall.box;
+    const n = new THREE.Vector3(b.sin, 0, b.cos);     // its face, outward
+    const mid = new THREE.Vector3(b.cx, b.y, b.cz);
+    const o = mid.clone().addScaledVector(n, 3), i = mid.clone().addScaledVector(n, -1.6);
+    out.wallWalk = W.blocked(mid.x + n.x * 0.5, mid.z + n.z * 0.5, 0.3, b.y + 0.5);
+    out.wallSight = W.lineOfSight(o.x, b.y + 0.6, o.z, i.x, b.y + 0.6, i.z);
+    out.overSight = W.lineOfSight(o.x, b.y + 1.5, o.z, i.x, b.y + 1.5, i.z);
+    p.reset(o.x, o.z);
+    tick(0.05);
+    g.camera.position.copy(p.position);
+    let hitAt = null;
+    const impact = g.effects.impact.bind(g.effects);
+    g.effects.impact = (pt, nn, s) => { hitAt = pt.clone(); return impact(pt, nn, s); };
+    const def = { ...g.weapons.def, spread: 0, adsSpread: 0, range: 60 };
+    g.hitscan(mid.clone().setY(b.y + 0.5).sub(g.camera.position).normalize(), def);
+    g.effects.impact = impact;
+    out.wallRound = !!hitAt && hitAt.distanceTo(mid.clone().setY(hitAt.y)) < 1.3;
+
+    // wire: a hostile in a coil wades and bleeds, and what it kills is yours
+    const wr = D.wires.find((w) => w.up);
+    const radial = new THREE.Vector3(wr.sin, 0, wr.cos);
+    const walkFrom = (up) => {
+      for (const w of D.wires) w.up = up ? w.used : false;
+      const e = g.spawnEnemy('scavenger');
+      e.pos.set(wr.x + radial.x * 0.6, wr.y, wr.z + radial.z * 0.6);
+      e.group.position.copy(e.pos);
+      e.nextFire = 1e9; e.alert();
+      const hp0 = e.hp, x0 = e.pos.clone();
+      tick(0.5);
+      const moved = Math.hypot(e.pos.x - x0.x, e.pos.z - x0.z);
+      const res = { moved, cut: hp0 - e.hp, e };
+      return res;
+    };
+    for (const w of D.wires) w.used = w.up;
+    p.reset(D.gunAt.x, D.gunAt.z - 0); tick(0.05);
+    p.reset(D.site.x - radial.x * 2, D.site.z - radial.z * 2); tick(0.05);
+    const inWire = walkFrom(true);
+    inWire.e.alive = false; inWire.e.group.visible = false;
+    const noWire = walkFrom(false);
+    noWire.e.alive = false; noWire.e.group.visible = false;
+    for (const w of D.wires) w.up = w.used;
+    out.wire = { moved: +inWire.moved.toFixed(2), free: +noWire.moved.toFixed(2), cut: +inWire.cut.toFixed(1), freeCut: +noWire.cut.toFixed(1) };
+    const doomed = g.spawnEnemy('scavenger');
+    doomed.pos.set(wr.x, wr.y, wr.z); doomed.group.position.copy(doomed.pos);
+    doomed.nextFire = 1e9; doomed.hp = 2;
+    tick(0.6);
+    out.wireKill = !doomed.alive && labels.includes('WIRE');
+    for (const e of g.enemies) e.alive = false;
+
+    // the gun: manned on E, the view on its sight, your weapon away
+    const fwd = new THREE.Vector3(Math.sin(D.facing), 0, Math.cos(D.facing));
+    p.reset(D.gunAt.x - fwd.x * 1, D.gunAt.z - fwd.z * 1);
+    tick(0.05);
+    tap('KeyE');
+    out.manned = p.vehicle === D;
+    tick(0.1);
+    out.gunHidden = !g.weapons.root.visible;
+    // a raider down the street it faces, in its sights
+    let target = null;
+    for (const d of [24, 18, 30, 14, 36, 10]) {
+      const x = D.gunAt.x + fwd.x * d, z = D.gunAt.z + fwd.z * d;
+      const y = W.groundHeight(x, z, 0.12, D.gunAt.y + 0.8);
+      if (W.blocked(x, z, 0.5, y + 0.6)) continue;
+      if (!W.lineOfSight(p.position.x, p.position.y, p.position.z, x, y + 1.2, z)) continue;
+      target = { x, y, z, d }; break;
+    }
+    out.target = target && target.d;
+    if (target) {
+      const e = g.spawnEnemy('raider');
+      e.pos.set(target.x, target.y, target.z); e.group.position.copy(e.pos);
+      e.nextFire = 1e9; e.update = () => { e.group.updateMatrixWorld(true); };
+      e.group.updateMatrixWorld(true);
+      const hp0 = e.hp;
+      const chest = e.parts.torso.getWorldPosition(new THREE.Vector3());
+      p.yaw = D.facing + Math.PI;
+      p.pitch = Math.atan2(chest.y - p.position.y, Math.hypot(chest.x - p.position.x, chest.z - p.position.z));
+      g.input.fire = true;
+      tick(0.5);
+      g.input.fire = false;
+      out.hostileHit = hp0 - (e.alive ? e.hp : 0);
+      out.gunKill = !e.alive && labels.includes('M240');
+      e.alive = false; e.group.visible = false;
+    }
+    // it keeps to its arc
+    p.yaw = D.facing + Math.PI + 2.6;
+    tick(0.05);
+    out.arc = +Math.abs(wrap(D.aimYaw - D.facing)).toFixed(3);
+    // held, the barrel overheats, stops, and comes back once it has cooled
+    p.yaw = D.facing + Math.PI;
+    D.heat = 0;
+    g.input.fire = true;
+    let hotAt = null;
+    for (let t = 0; t < 12 && hotAt === null; t += 0.25) { tick(0.25); if (D.hot) hotAt = t; }
+    const shotsHot = D.shots;
+    tick(0.5);
+    out.heat = { hotAt, firedHot: D.shots - shotsHot };
+    g.input.fire = false;
+    tick(2.5);
+    out.heat.cooled = !D.hot;
+    // its shield takes most of what comes from in front, and none from behind
+    p.health = p.maxHealth; p.armour = 0; p.lastDamageTime = -1e9;
+    let h0 = p.health;
+    g.damagePlayer(40, new THREE.Vector3(D.gunAt.x + fwd.x * 15, 1, D.gunAt.z + fwd.z * 15));
+    out.front = +(h0 - p.health).toFixed(1);
+    p.health = p.maxHealth; h0 = p.health;
+    g.damagePlayer(40, new THREE.Vector3(D.gunAt.x - fwd.x * 15, 1, D.gunAt.z - fwd.z * 15));
+    out.back = +(h0 - p.health).toFixed(1);
+    p.health = p.maxHealth;
+    // off on E, standing behind it
+    tap('KeyE');
+    out.off = p.vehicle === null && p.position.distanceTo(new THREE.Vector3(D.gunAt.x, p.position.y, D.gunAt.z)) > 0.9;
+
+    // the convoy over, everything comes down
+    g.objectives.finish(true);
+    out.struck = !D.gunUp && !W.movers.some((b) => (b.sandbags || b === D.gunBox) && !b.off)
+      && D.walls.every((w) => !w.mesh.visible) && D.wires.every((w) => !w.mesh.visible) && !D.gunRoot.visible;
+    // and the kit is gone with the run
+    g.startRun();
+    g.wave = 12;
+    const again = g.objectives.start('convoy');
+    out.fresh = again && again.fortified;
+    return out;
+  });
+  expect(r.early === 0 && r.earlyBuy === false, `the depot's kit is on the shelf before Act III: ${JSON.stringify(r)}`);
+  expect(r.shelf === 'sandbags,wire,mg', `the depot's kit is not on the shelf in Act III: ${r.shelf}`);
+  expect(r.upBefore === 0, `the kit stood in the street before the convoy`);
+  expect(r.raised && r.raised.walls >= 6 && r.raised.wire >= 4 && r.raised.gun, `the depot was not fortified: ${JSON.stringify(r.raised)}`);
+  expect(r.wallWalk && !r.wallSight && r.overSight && r.wallRound, `a sandbag wall does not stop a body, a sight line and a round: ${JSON.stringify(r)}`);
+  expect(r.wire.moved < r.wire.free * 0.6 && r.wire.cut > 3 && r.wire.freeCut === 0, `the wire does not hold up and cut a hostile: ${JSON.stringify(r.wire)}`);
+  expect(r.wireKill, `a kill in the wire was not yours: ${JSON.stringify(r)}`);
+  expect(r.manned && r.gunHidden, `could not man the gun: ${JSON.stringify(r)}`);
+  expect(r.target && r.hostileHit > 60, `the gun did not hit what it was aimed at: ${JSON.stringify(r)}`);
+  expect(r.arc <= 1.2501, `the gun turned past its arc: ${r.arc}`);
+  expect(r.heat.hotAt !== null && r.heat.hotAt > 3 && r.heat.firedHot === 0 && r.heat.cooled, `the barrel does not overheat and cool: ${JSON.stringify(r.heat)}`);
+  expect(r.front < 20 && r.back > 35, `the shield does not cover you from in front: ${r.front} in front, ${r.back} behind`);
+  expect(r.off, `getting off the gun did not stand you behind it`);
+  expect(r.struck, `the kit was not struck when the convoy ended`);
+  expect(r.fresh && r.fresh.walls === 0 && r.fresh.wire === 0 && !r.fresh.gun, `a new run kept the depot's kit: ${JSON.stringify(r.fresh)}`);
   return r;
 });
 

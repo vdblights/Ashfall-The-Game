@@ -178,7 +178,7 @@ class Audio {
     osc.start(t); osc.stop(t + dur + 0.02);
   }
 
-  /** @param {'pistol'|'smg'|'rifle'|'shotgun'} kind */
+  /** @param {'pistol'|'smg'|'rifle'|'shotgun'|'mg'} kind */
   shot(kind, distanceGain = 1, at = null) {
     if (!this.ctx) return;
     const out = this._out(at);
@@ -187,6 +187,7 @@ class Audio {
       smg:     { dur: 0.11, freq: 2400, q: 1.0, gain: 0.42, body: 190 },
       rifle:   { dur: 0.20, freq: 1500, q: 1.4, gain: 0.60, body: 120 },
       shotgun: { dur: 0.32, freq: 900,  q: 0.9, gain: 0.75, body: 80  },
+      mg:      { dur: 0.24, freq: 1100, q: 1.3, gain: 0.70, body: 95  },
     }[kind] || { dur: 0.16, freq: 1600, q: 1.2, gain: 0.5, body: 140 };
 
     this._noise(spec.dur, 'bandpass', spec.freq, spec.q, spec.gain * distanceGain, spec.freq * 0.25, out);

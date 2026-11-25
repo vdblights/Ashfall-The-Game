@@ -5,6 +5,9 @@ import * as TEX from './textures.js';
 import { TILE, blobShadow } from './textures.js';
 import { chamferGeo, mergeIntoOne, sideGeo, latheGeo, sweepGeo, bend, creaseNormals } from './shapes.js';
 import { reserve } from './rng.js';
+
+// how fast a body wades through the depot's wire; `DEPOT.wire.slow` in depot.js
+const WIRE_SLOW = 0.35;
 import { FUSE, GRAVITY as GRAVITY_FRAG } from './grenades.js';
 
 const V1 = new THREE.Vector3();
@@ -2077,7 +2080,9 @@ export class Enemy {
       }
     }
 
-    const speed = this.type.speed * (this.alerted || escorting ? 1 : 0.45) * (pushing ? PUSH.haste : 1) * (this.flee ? CAST.pace : 1);
+    const speed = this.type.speed * (this.alerted || escorting ? 1 : 0.45) * (pushing ? PUSH.haste : 1) * (this.flee ? CAST.pace : 1)
+      // a hostile in the depot's wire (`depot.js`) wades through it
+      * (this.snaredUntil > time ? WIRE_SLOW : 1);
     if (this.stagger > 0) {
       // A stumble: the feet go where the blow sent them, fastest at first,
       // and never off an edge — a marksman knocked back on a roof stays on it.

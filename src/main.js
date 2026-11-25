@@ -26,6 +26,7 @@ import { PerfMeter } from './perf.js';
 import { Barrels, BARREL } from './barrels.js';
 import { Glass } from './glass.js';
 import { Truck, TRUCK } from './truck.js';
+import { Depot } from './depot.js';
 import { updateWet } from './wet.js';
 import { installAtmosphere, skyMaterial, environmentFrom, SUN_DIR, SUN_COLOR } from './atmosphere.js';
 import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE, ShadowCache } from './shadows.js';
@@ -300,6 +301,10 @@ class Game {
         this.truck = reserve(() => new Truck(this));
         this.scene.add(this.truck.group);
         this.dress(this.truck.group);
+        // the depot's sandbags, wire and gun, all down until the convoy
+        this.depot = reserve(() => new Depot(this));
+        this.scene.add(this.depot.group);
+        this.dress(this.depot.group);
       }],
       ['Kitting out the hostiles', 4, () => {
         reserve(() => {
@@ -976,7 +981,8 @@ class Game {
     this.input.onKey = (code) => {
       if (this.state !== 'playing') return;
       // at the wheel, the wheel is all your hands are on
-      if (this.player.vehicle && code !== 'KeyB' && code !== 'KeyM') return;
+      // behind the depot's gun, the weapon light is still yours
+      if (this.player.vehicle && code !== 'KeyB' && code !== 'KeyM' && !(code === 'KeyL' && this.player.vehicle.gun)) return;
       if (code === 'KeyR') this.weapons.startReload(this.time);
       if (code === 'Digit1') this.weapons.select(0, this.time);
       if (code === 'Digit2') this.weapons.select(1, this.time);
@@ -1030,6 +1036,7 @@ class Game {
         // E gets out of the pickup, into it, or works a door, in that order
         else if (this.player.vehicle) this.player.vehicle.exit();
         else if (this.cookStart < 0 && this.truck.enter(this.player)) this.hud.toast('[W][S] DRIVE · [A][D] STEER · [SPACE] BRAKE');
+        else if (this.cookStart < 0 && this.depot.enter(this.player)) this.hud.toast('[MOUSE] TRAVERSE · [FIRE] IN BURSTS · [E] OFF');
         else this.useDoor();
       }
     };
@@ -1089,6 +1096,7 @@ class Game {
     this.shutDoors();
     this.player.reset(INSERTION.x, INSERTION.z);
     this.truck.reset();
+    this.depot.reset();
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
     this.player.onSlide = () => { audio.slide(); this.player.addShake(0.05); };
@@ -1744,7 +1752,7 @@ class Game {
   }
 
   /** One bullet. `dir` is already spread-jittered. */
-  hitscan(dir, def) {
+  hitscan(dir, def, from = null) {
     this.shotsFired += def.pellets > 1 ? 1 / def.pellets : 1;
 
     RAY.set(this.camera.position, dir);
@@ -1761,12 +1769,15 @@ class Game {
     const hitsB = RAY.intersectObjects(this.barrels.meshes, false);
     // and so is the pickup, which moves
     const hitsT = RAY.intersectObjects(this.truck.meshes, false);
+    // and the depot's sandbags, which go up and come down
+    const hitsS = RAY.intersectObjects(this.depot.meshes, false);
     const hitE = hitsE[0];
     let hitW = hitsW[0];
+    if (hitsS[0] && (!hitW || hitsS[0].distance < hitW.distance)) hitW = hitsS[0];
     if (hitsB[0] && (!hitW || hitsB[0].distance < hitW.distance)) hitW = hitsB[0];
     if (hitsT[0] && (!hitW || hitsT[0].distance < hitW.distance)) hitW = hitsT[0];
 
-    const muzzle = this.weapons.muzzleWorld(V1).clone();
+    const muzzle = from ? from.clone() : this.weapons.muzzleWorld(V1).clone();
     let end = V2.copy(this.camera.position).addScaledVector(dir, def.range).clone();
 
     // glass is no stop to a round: every pane it passes before what it does
@@ -2068,8 +2079,10 @@ class Game {
     if (this.state !== 'playing' || this.player.dead) return;
     // in the cab, the truck takes most of a round or a blast meant for you
     if (this.player.vehicle && !unarmoured) {
-      this.player.vehicle.damage(amount * (1 - TRUCK.shelter) * 2);
-      amount *= TRUCK.shelter;
+      // behind the depot's gun, its shield takes what comes from in front
+      const shelter = this.player.vehicle.shelterFrom ? this.player.vehicle.shelterFrom(fromPos) : TRUCK.shelter;
+      this.player.vehicle.damage(amount * (1 - shelter) * 2);
+      amount *= shelter;
     }
     if (!unarmoured) amount = this.player.soak(amount * EFFECT.armour[this.kit.armour]);
     const died = this.player.damage(amount, this.time);
@@ -2240,6 +2253,9 @@ class Game {
     // the pickup after the look, so the camera it puts behind the cab is on
     // this step's mouse; at the wheel there is no gun in your hands
     this.truck.update(dt, this.time, input);
+    // the depot's gun the same way, and its wire on whoever is in it
+    this.depot.update(dt, this.time, input);
+    this.depot.snare(dt, this.time);
     const driving = !!this.player.vehicle;
     if (!driving) this.weapons.update(dt, this.time, input, this.player);
 
