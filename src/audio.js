@@ -449,6 +449,55 @@ class Audio {
     this.rainBed.g.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4);
   }
 
+  /**
+   * The pickup's engine: a looped bed of two detuned saws through a lowpass,
+   * its pitch the revs and its gain `level` (0 with nobody at the wheel).
+   * Unplaced, like your own steps: you are sitting on it. Kept with the
+   * context it was built on, because the sound checks swap the context.
+   */
+  engine(level, rpm = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    if (this.engineBed && this.engineBed.ctx !== ctx) this.engineBed = null;
+    if (!this.engineBed) {
+      if (level <= 0) return;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      const flt = ctx.createBiquadFilter();
+      flt.type = 'lowpass';
+      flt.frequency.value = 420;
+      flt.Q.value = 2.2;
+      flt.connect(g);
+      g.connect(this.master);
+      const oscs = [];
+      for (const [type, mul, gain] of [['sawtooth', 1, 0.16], ['sawtooth', 1.012, 0.12], ['square', 0.5, 0.09]]) {
+        const o = ctx.createOscillator();
+        o.type = type;
+        o.frequency.value = 38 * mul;
+        const v = ctx.createGain();
+        v.gain.value = gain;
+        o.connect(v); v.connect(flt);
+        o.start();
+        oscs.push({ o, mul });
+      }
+      this.engineBed = { ctx, g, flt, oscs };
+    }
+    const bed = this.engineBed, t = ctx.currentTime;
+    const f = 34 + 70 * rpm;
+    for (const { o, mul } of bed.oscs) o.frequency.setTargetAtTime(f * mul, t, 0.08);
+    bed.flt.frequency.setTargetAtTime(320 + 900 * rpm, t, 0.1);
+    bed.g.gain.setTargetAtTime(level, t, level > 0 ? 0.15 : 0.3);
+  }
+
+  /** Steel meeting something at speed: a thump, a crunch and a rattle. */
+  crash(gain = 1, at = null) {
+    if (!this.ctx) return;
+    const out = this._out(at);
+    this._tone('sine', 90, 40, 0.35, 0.5 * gain, 0, out);
+    this._noise(0.45, 'lowpass', 1400, 0.9, 0.45 * gain, 180, out);
+    this._noise(0.25, 'bandpass', 3200, 2.5, 0.18 * gain, 1200, out);
+  }
+
   /** Thunder, `delay` seconds after the flash, a rumble that rolls away. */
   thunder(gain = 1, delay = 1) {
     if (!this.ctx) return;

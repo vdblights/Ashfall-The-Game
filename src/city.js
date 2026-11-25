@@ -1010,7 +1010,7 @@ function shadeGeometry(geo, tint, occlusion, mottle = 0, indoors = null, keep = 
  * and the numbers are the collider: 1.9 m across, 4.4 m long, 1.5 m high.
  * Nothing here may reach past that, because the collider is what you feel.
  */
-const WHEEL = { r: 0.335, z: 1.36, x: 0.79, arch: 0.40, cy: 0.335 };
+export const WHEEL = { r: 0.335, z: 1.36, x: 0.79, arch: 0.40, cy: 0.335 };
 
 function carShapes(pickup) {
   const M = TILE.metal, G = TILE.glass;
@@ -1115,15 +1115,20 @@ function carShapes(pickup) {
     }
   }
   // the dark of the wheel well, so the arch is a hole and not a window
+  const wells = [];
   for (const wz of [-WHEEL.z, WHEEL.z]) {
-    wheels.push(cylGeo(WHEEL.arch - 0.008, WHEEL.arch - 0.008, 1.30, R, 10, true).rotateZ(Math.PI / 2).translate(0, WHEEL.cy, wz));
+    wells.push(cylGeo(WHEEL.arch - 0.008, WHEEL.arch - 0.008, 1.30, R, 10, true).rotateZ(Math.PI / 2).translate(0, WHEEL.cy, wz));
   }
+  wheels.push(...wells);
 
   return {
     panels: mergeIntoOne(panels),
     cabin: mergeIntoOne(glass),
     trim: mergeIntoOne(trim),
     wheels: mergeIntoOne(wheels),
+    // apart, for the one car that drives (truck.js): its wheels turn
+    wheel: mergeIntoOne([wheel]),
+    wells: mergeIntoOne(wells),
   };
 }
 

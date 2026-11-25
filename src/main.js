@@ -24,6 +24,7 @@ import { ArmouryScreen, EFFECT, freshKit } from './armoury.js';
 import { PerfMeter } from './perf.js';
 import { Barrels, BARREL } from './barrels.js';
 import { Glass } from './glass.js';
+import { Truck, TRUCK } from './truck.js';
 import { updateWet } from './wet.js';
 import { installAtmosphere, skyMaterial, environmentFrom, SUN_DIR, SUN_COLOR } from './atmosphere.js';
 import { installShadowCascade, placeShadow, sizeShadow, SUN_DISTANCE, ShadowCache } from './shadows.js';
@@ -284,6 +285,12 @@ class Game {
         this.hud = new HUD();
         this.grenades = new GrenadeSystem(this.scene, this);
         this.objectives = new ObjectiveSystem(this.scene, this);
+        // the one car that still runs, parked on the street nearest the
+        // insertion point; built in a reserve, like every look after the city
+        this.insertion = INSERTION;
+        this.truck = reserve(() => new Truck(this));
+        this.scene.add(this.truck.group);
+        this.dress(this.truck.group);
       }],
       ['Kitting out the hostiles', 4, () => {
         reserve(() => {
@@ -958,6 +965,8 @@ class Game {
     this.armoury = new ArmouryScreen(this);
     this.input.onKey = (code) => {
       if (this.state !== 'playing') return;
+      // at the wheel, the wheel is all your hands are on
+      if (this.player.vehicle && code !== 'KeyB' && code !== 'KeyM') return;
       if (code === 'KeyR') this.weapons.startReload(this.time);
       if (code === 'Digit1') this.weapons.select(0, this.time);
       if (code === 'Digit2') this.weapons.select(1, this.time);
@@ -1003,7 +1012,10 @@ class Game {
       // as the key comes up: a key held long enough to lean did not tap
       if ((code === 'KeyQ' || code === 'KeyE') && this.state === 'playing'
           && (this.player.leanHeld[code] || 0) < LEAN.hold) {
-        if (code === 'KeyQ') this.weapons.cycle(1, this.time);
+        if (code === 'KeyQ') { if (!this.player.vehicle) this.weapons.cycle(1, this.time); }
+        // E gets out of the pickup, into it, or works a door, in that order
+        else if (this.player.vehicle) this.player.vehicle.exit();
+        else if (this.cookStart < 0 && this.truck.enter(this.player)) this.hud.toast('[W][S] DRIVE · [A][D] STEER · [SPACE] BRAKE');
         else this.useDoor();
       }
     };
@@ -1062,6 +1074,7 @@ class Game {
 
     this.shutDoors();
     this.player.reset(INSERTION.x, INSERTION.z);
+    this.truck.reset();
     this.player.onStep = () => audio.step(this.player.crouching);
     this.player.onMantle = () => { audio.mantle(); this.player.addShake(0.08); };
     this.player.onSlide = () => { audio.slide(); this.player.addShake(0.05); };
@@ -1722,9 +1735,12 @@ class Game {
     // a fire barrel is a raycast target of its own, outside `world.solids`,
     // because it stands in the scene to be blown up rather than in the bake
     const hitsB = RAY.intersectObjects(this.barrels.meshes, false);
+    // and so is the pickup, which moves
+    const hitsT = RAY.intersectObjects(this.truck.meshes, false);
     const hitE = hitsE[0];
     let hitW = hitsW[0];
     if (hitsB[0] && (!hitW || hitsB[0].distance < hitW.distance)) hitW = hitsB[0];
+    if (hitsT[0] && (!hitW || hitsT[0].distance < hitW.distance)) hitW = hitsT[0];
 
     const muzzle = this.weapons.muzzleWorld(V1).clone();
     let end = V2.copy(this.camera.position).addScaledVector(dir, def.range).clone();
@@ -1879,6 +1895,10 @@ class Game {
       this.player.addShake(0.25 * (1 - pd / (R * 2.5)));
     }
 
+    // the pickup, which is steel and a fuel tank
+    const td = Math.hypot(this.truck.pos.x - pos.x, this.truck.pos.y + 0.8 - pos.y, this.truck.pos.z - pos.z);
+    if (td < R) this.truck.damage(BLAST_DAMAGE * 1.4 * Math.pow(1 - td / R, 1.3));
+
     // and what else it reaches goes too: a lit drum after it, and the glass
     this.barrels.blast(pos, R, owner);
     this.glass.blast(pos, R * 1.4);
@@ -2022,6 +2042,11 @@ class Game {
 
   damagePlayer(amount, fromPos, unarmoured = false) {
     if (this.state !== 'playing' || this.player.dead) return;
+    // in the cab, the truck takes most of a round or a blast meant for you
+    if (this.player.vehicle && !unarmoured) {
+      this.player.vehicle.damage(amount * (1 - TRUCK.shelter) * 2);
+      amount *= TRUCK.shelter;
+    }
     if (!unarmoured) amount = this.player.soak(amount * EFFECT.armour[this.kit.armour]);
     const died = this.player.damage(amount, this.time);
     audio.hurt();
@@ -2061,6 +2086,8 @@ class Game {
     const frozen = this.state === 'paused' || this.state === 'armoury';
     // a controller is read once a frame, like the mouse
     this.input.pollPad();
+    // an engine with nobody playing is silenced, not left idling under a menu
+    if (this.state !== 'playing') this.truck?.quiet();
     for (let i = 0; i < steps; i++) {
       if (!frozen) this.time += dt;
       if (this.state === 'playing') this.step(dt);
@@ -2184,13 +2211,17 @@ class Game {
     this.sight = this.storm.sight;
 
     this.player.update(dt, this.time, input);
-    this.weapons.update(dt, this.time, input, this.player);
+    // the pickup after the look, so the camera it puts behind the cab is on
+    // this step's mouse; at the wheel there is no gun in your hands
+    this.truck.update(dt, this.time, input);
+    const driving = !!this.player.vehicle;
+    if (!driving) this.weapons.update(dt, this.time, input, this.player);
 
-    if (input.wheel) this.weapons.cycle(input.wheel > 0 ? 1 : -1, this.time);
+    if (input.wheel && !driving) this.weapons.cycle(input.wheel > 0 ? 1 : -1, this.time);
 
     // firing
     const w = this.weapons.current;
-    if (input.fire && !this.player.dead && !this.player.mantle) {   // both hands on the ledge
+    if (input.fire && !this.player.dead && !this.player.mantle && !driving) {   // both hands on the ledge, or the wheel
       const moving = Math.hypot(this.player.velocity.x, this.player.velocity.z) > 2.5;
       if (this.weapons.fire(this.time, this.camera, moving)) {
         if (!w.def.auto) input.fire = false;
@@ -2208,7 +2239,10 @@ class Game {
     const at = this.player.position;
     this.playerStair = this.world.stairAt(at.x, this.player.feetY, at.z);
     const from = this.playerStair ? this.playerStair.stair.path[0] : at;
-    this.nav.update(from.x, from.z);
+    // At the wheel the player crosses a cell a frame, and the field is
+    // rebuilt on every crossing; a few times a second is plenty for hostiles
+    // that walk at a fifth of the truck's pace.
+    if (!driving || this.time - (this.navAt ?? -9) > 0.4) { this.nav.update(from.x, from.z); this.navAt = this.time; }
     // Which building the player has gone into, for the hostiles that cover
     // its doors and throw through them; and whether their gun is out of the
     // fight, which is what the rest push on.
@@ -2256,7 +2290,7 @@ class Game {
     this.updateAmbience(dt);
     this.effects.update(dt);
     this.hud.update(this);
-    this.weapons.root.visible = !this.hud.scoped;
+    this.weapons.root.visible = !this.hud.scoped && !driving;
 
     // FOV blends when aiming and when sprinting
     const ads = this.weapons.adsT;

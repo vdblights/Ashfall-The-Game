@@ -6028,6 +6028,10 @@ check('weeds grow where they can stand, and stay off the low tier', async (page)
   const r = await page.evaluate(() => {
     const g = window.__game;
     const W = g.world;
+    // what drives (the pickup) parks wherever it was left, over a weed or
+    // not; this asks about the city the weeds were grown in
+    const movers = W.movers;
+    W.movers = [];
     let tufts = 0, floating = 0, buried = 0, inside = 0;
     for (const mesh of g.weedMeshes) {
       const p = mesh.geometry.attributes.position;
@@ -6042,6 +6046,7 @@ check('weeds grow where they can stand, and stay off the low tier', async (page)
         if (W.occupied(x, z, 0, 0.6)) inside++;
       }
     }
+    W.movers = movers;
     const inSolids = g.world.solids.some((m) => m.material?.userData?.name === 'weeds');
     g.applyQuality('high');
     const shownHigh = g.weedMeshes.every((m) => m.visible);
@@ -9505,6 +9510,207 @@ check('look still works when pointer lock is denied', { weight: 1 }, async (page
   expect(r.afterLeave === 0, `the view kept turning after the cursor left (${r.afterLeave})`);
   expect(Math.abs(r.arrows) > 1, 'arrow keys did not aim');
   expect(r.hinted, 'nothing told the player capture was unavailable');
+  return r;
+});
+
+check('a pickup can be driven: in, down a street, over a hostile, into a wall, and out', { weight: 2 }, async (page) => {
+  // A parked pickup is a collider that moves, outside the sealed index
+  // (`world.movers`). Driven, it runs over what it reaches fast enough,
+  // stops at walls and is hurt by them, takes most of what is shot at its
+  // driver, and burns and blows when it is spent.
+  const r = await page.evaluate(async () => {
+    const THREE = await import('three');
+    const g = window.__game, W = g.world, p = g.player, T = g.truck;
+    g.startRun();
+    g.startWave = () => {};
+    g.input.locked = true;
+    g.spawnQueue.length = 0; g.pendingSpawns = 0; g.bossPending = false;
+    const tick = (s) => window.__step(s);
+    const keys = g.input.keys;
+    const tap = (code) => { g.input.onKeyUp?.(code); };
+    const out = { movers: W.movers.length, spot: { ...T.spot } };
+    const box = T.box;
+    const fwd = () => new THREE.Vector3(Math.sin(T.yaw), 0, Math.cos(T.yaw));
+    const footprint = (x, z, pad = 0) => {
+      const rx = x - T.pos.x, rz = z - T.pos.z;
+      const lx = Math.cos(T.yaw) * rx - Math.sin(T.yaw) * rz, lz = Math.sin(T.yaw) * rx + Math.cos(T.yaw) * rz;
+      return Math.abs(lx) < 0.95 + pad && Math.abs(lz) < 2.2 + pad;
+    };
+    const place = (x, z, yaw) => {
+      T.pos.set(x, W.groundHeight(x, z, 0.3, 0.6), z); T.yaw = yaw; T.v = 0; T.vy = 0; T.steer = 0;
+      T._place();
+    };
+
+    // parked on the road, with nothing standing in it
+    box.off = true;
+    out.parkedClear = !W.blocked(T.pos.x, T.pos.z, 0.9, 0.3);
+    box.off = false;
+    // a parked truck is a wall to a body, a round and a sight line
+    const side = new THREE.Vector3(Math.cos(T.yaw), 0, -Math.sin(T.yaw));
+    out.walkBlocked = W.blocked(T.pos.x + side.x * 0.6, T.pos.z + side.z * 0.6, 0.3, 1.2);
+    const a = T.pos.clone().addScaledVector(side, 4).setY(T.pos.y + 1.0);
+    const b = T.pos.clone().addScaledVector(side, -4).setY(T.pos.y + 1.0);
+    out.sightAcross = W.lineOfSight(a.x, a.y, a.z, b.x, b.y, b.z);
+    p.reset(a.x, a.z);
+    tick(0.05);
+    g.camera.position.copy(p.position);
+    let hitAt = null;
+    const impact = g.effects.impact.bind(g.effects);
+    g.effects.impact = (pt, n, s) => { hitAt = pt.clone(); return impact(pt, n, s); };
+    const def = { ...g.weapons.def, spread: 0, adsSpread: 0, range: 60 };
+    g.hitscan(T.pos.clone().setY(T.pos.y + 0.9).sub(g.camera.position).normalize(), def);
+    g.effects.impact = impact;
+    out.roundStopped = !!hitAt && footprint(hitAt.x, hitAt.z, 0.15);
+
+    // a clear straight run of road for it: 40 m, every metre clear across
+    // its width, on the road
+    let run = null;
+    const S = g.streets;
+    search: for (const c of S.centres) {
+      for (const lane of [-1.5, 1.5]) {
+        for (const alongX of [true, false]) {
+          for (const dir of [1, -1]) {
+            for (let t0 = -S.end + 6; Math.abs(t0 + dir * 40) < S.end - 4 || (dir < 0 && t0 > -S.end + 46); t0 += 2) {
+              const start = dir > 0 ? t0 : -t0;
+              let ok = true;
+              for (let s = -3; s <= 40 && ok; s += 1) {
+                for (const u of [-1.1, 0, 1.1]) {
+                  const tt = start + dir * s;
+                  const x = alongX ? tt : c + lane + u, z = alongX ? c + lane + u : tt;
+                  if (Math.abs(x) > W.bounds - 3 || Math.abs(z) > W.bounds - 3) { ok = false; break; }
+                  if (W.blocked(x, z, 0.5, 0.42) || W.groundHeight(x, z, 0.2, 0.6) > 0.1) { ok = false; break; }
+                }
+              }
+              if (!ok) continue;
+              const x = alongX ? start : c + lane, z = alongX ? c + lane : start;
+              const yaw = alongX ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
+              run = { x, z, yaw };
+              break search;
+            }
+          }
+        }
+      }
+    }
+    out.run = !!run;
+    if (!run) return out;
+
+    // in, by the door, on a tap of E
+    place(run.x, run.z, run.yaw);
+    const door = T.pos.clone().addScaledVector(new THREE.Vector3(Math.cos(T.yaw), 0, -Math.sin(T.yaw)), -1.7);
+    p.reset(door.x, door.z);
+    tick(0.05);
+    out.inReach = T.inReach(p);
+    tap('KeyE');
+    out.inCab = p.vehicle === T;
+    if (!out.inCab) return out;
+
+    // a scavenger standing in the road 28 m on
+    const e = g.spawnEnemy('scavenger');
+    const ahead = T.pos.clone().addScaledVector(fwd(), 28);
+    e.pos.set(ahead.x, T.pos.y, ahead.z); e.group.position.copy(e.pos);
+    e.update = () => {}; e.nextFire = 1e9;
+    const labels = [];
+    const kill = g.hud.kill.bind(g.hud);
+    g.hud.kill = (...args) => { labels.push(String(args[0] ?? '') + ' ' + JSON.stringify(args.slice(1))); return kill(...args); };
+
+    keys.add('KeyW');
+    tick(2);
+    out.speed2s = T.v;
+    out.eyeInside = W._insideMover(box, p.position.x, p.position.y, p.position.z);
+    const cam = g.camera.position.clone().sub(T.pos);
+    out.cameraBehind = cam.dot(fwd());
+    out.gunHidden = !g.weapons.root.visible;
+    // and a hostile beside the road sees the driver through the cab
+    const by = T.pos.clone().addScaledVector(new THREE.Vector3(Math.cos(T.yaw), 0, -Math.sin(T.yaw)), -8).setY(T.pos.y + 1.6);
+    box.off = true;
+    const clearBy = W.lineOfSight(p.position.x, p.position.y, p.position.z, by.x, by.y, by.z);
+    box.off = false;
+    out.driverSeen = !clearBy || W.lineOfSight(by.x, by.y, by.z, p.position.x, p.position.y, p.position.z);
+    for (let i = 0; i < 30 && e.alive; i++) tick(0.1);
+    keys.delete('KeyW');
+    g.hud.kill = kill;
+    out.rammed = !e.alive;
+    out.rams = T.rams;
+    out.label = labels.join('|');
+    keys.add('Space'); tick(2); keys.delete('Space');
+    out.stopped = Math.abs(T.v);
+
+    // what is shot at the driver mostly lands on the truck
+    const hp0 = p.health, thp0 = T.hp;
+    g.damagePlayer(40, T.pos.clone().addScaledVector(side, 10));
+    out.split = { player: hp0 - p.health, truck: thp0 - T.hp };
+
+    // into the face of a building at speed, and it stops at it
+    let wall = null;
+    for (const bx of W.boxes) {
+      if (bx.base || bx.floor || bx.heap || bx.door || bx.cos !== 1 || bx.top < 6) continue;
+      if (bx.maxX - bx.minX < 8 || bx.maxZ - bx.minZ < 8) continue;
+      const cx = (bx.minX + bx.maxX) / 2, cz = (bx.minZ + bx.maxZ) / 2;
+      for (const [nx, nz, fx, fz] of [[1, 0, bx.maxX, cz], [-1, 0, bx.minX, cz], [0, 1, cx, bx.maxZ], [0, -1, cx, bx.minZ]]) {
+        const sx = fx + nx * 13, sz = fz + nz * 13;
+        let ok = true;
+        for (let s = 0.5; s <= 13 && ok; s += 0.5) {
+          for (const u of [-1.1, 0, 1.1]) {
+            const x = fx + nx * s + (nz ? u : 0), z = fz + nz * s + (nx ? u : 0);
+            box.off = true;
+            const bad = W.blocked(x, z, 0.3, 0.42) || W.groundHeight(x, z, 0.2, 0.6) > 0.35;
+            box.off = false;
+            if (bad) { ok = false; break; }
+          }
+        }
+        if (ok) { wall = { sx, sz, yaw: Math.atan2(-nx, -nz), fx, fz, nx, nz }; break; }
+      }
+      if (wall) break;
+    }
+    out.wall = !!wall;
+    if (!wall) return out;
+    place(wall.sx, wall.sz, wall.yaw);
+    T.v = 13;
+    const crashes0 = T.crashes, hpw = T.hp;
+    keys.add('KeyW');
+    for (let i = 0; i < 25; i++) tick(0.06);
+    keys.delete('KeyW');
+    const nose = T.pos.clone().addScaledVector(fwd(), 2.2);
+    out.into = (nose.x - wall.fx) * -wall.nx + (nose.z - wall.fz) * -wall.nz;   // > 0 is inside the wall
+    out.crashes = T.crashes - crashes0;
+    out.wallHurt = hpw - T.hp;
+    out.wallSpeed = Math.abs(T.v);
+
+    // out by the door, onto the road beside it
+    tap('KeyE');
+    tick(0.05);
+    out.out = !p.vehicle;
+    out.outside = !footprint(p.position.x, p.position.z, 0.1);
+    out.gunBack = g.weapons.root.visible;
+
+    // spent, it burns and blows, and cannot be got into
+    T.damage(9999);
+    tick(2.6);
+    out.dead = T.dead; out.blown = T.blown;
+    const near = T.pos.clone().addScaledVector(side, 1.8);
+    p.reset(near.x, near.z);
+    tick(0.05);
+    tap('KeyE');
+    out.enterDead = p.vehicle === T;
+
+    // a new run parks it again
+    g.startRun();
+    out.reset = !T.dead && T.hp === 600 && Math.hypot(T.pos.x - T.spot.x, T.pos.z - T.spot.z) < 0.01;
+    return out;
+  });
+  expect(r.movers === 1 && r.parkedClear, `the pickup is not parked clear on the road: ${JSON.stringify(r)}`);
+  expect(r.walkBlocked && !r.sightAcross && r.roundStopped, `a parked pickup does not stop a body, a sight line and a round: ${JSON.stringify(r)}`);
+  expect(r.run && r.inReach && r.inCab, `could not get into the pickup: ${JSON.stringify(r)}`);
+  expect(r.speed2s > 7, `the pickup is slow off the line: ${r.speed2s} m/s after 2 s`);
+  expect(r.driverSeen, `a hostile cannot see the driver in the cab`);
+  expect(r.eyeInside && r.cameraBehind < -3 && r.gunHidden, `the view is not a chase camera over the cab: ${JSON.stringify(r)}`);
+  expect(r.rammed && r.rams >= 1 && /PICKUP/.test(r.label), `the pickup did not run the scavenger down: ${JSON.stringify(r)}`);
+  expect(r.stopped < 0.5, `the brake did not stop it: ${r.stopped}`);
+  expect(r.split.player > 10 && r.split.player < 18 && r.split.truck > 40, `the cab does not take the round: ${JSON.stringify(r.split)}`);
+  expect(r.wall && r.into < 0.15 && r.crashes > 0 && r.wallHurt > 0 && r.wallSpeed < 1, `the pickup did not stop at the wall: ${JSON.stringify(r)}`);
+  expect(r.out && r.outside && r.gunBack, `getting out did not put you beside it: ${JSON.stringify(r)}`);
+  expect(r.dead && r.blown && !r.enterDead, `a spent pickup did not burn out: ${JSON.stringify(r)}`);
+  expect(r.reset, `a new run did not park it again`);
   return r;
 });
 

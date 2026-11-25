@@ -151,7 +151,8 @@ scale had no initial value.
 | `Q` / `E` (hold) | Lean left / right round a corner |
 | `G` | Frag grenade — **hold to cook**, release to throw |
 | `F` / `V` | Melee bash |
-| `E` (tap) | Open or close a door in front of you |
+| `E` (tap) | Get into or out of the pickup, or open or close a door in front of you |
+| `W` `S` / `A` `D` / `Space` (in the pickup) | Drive / steer / brake |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
 | `` ` `` | Frame-rate readout |
@@ -741,6 +742,13 @@ one in front of you, and it will not shut on anyone standing in it. A door
 hides you; it does not hold anything out. A hostile that walks up to a shut
 door opens it and comes through, so shutting yourself in buys you a moment
 of not being seen and the sound of it opening.
+
+A pickup is parked on the road by the insertion point. `E` beside a door
+gets you in: `W` and `S` drive, `A` and `D` steer, `Space` brakes, and the
+camera rides behind the cab. It runs down what it reaches fast enough, it
+is cover you can move, and the cab takes most of what is shot at you, but
+it is hurt by every wall you hit and every round it stops. Spent, it
+throws you out, burns for a couple of seconds and blows.
 
 The fire barrels burning in the streets go up. Two pistol rounds or one
 from the shotgun hole a drum, it roars for half a second, and then it blows
