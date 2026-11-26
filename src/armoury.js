@@ -50,11 +50,33 @@ export const ITEMS = [
     what: ['Every weapon to full ammunition, and two frags'] },
   { id: 'medkit', name: 'FIELD DRESSING', cost: [500], repeat: true,
     what: ['Back to full health'] },
+  // the depot's kit (`depot.js`): on the shelf in Act III until the convoy
+  // is out, and put up round the depot when the convoy comes
+  { id: 'sandbags', name: 'SANDBAGS', cost: [900, 1800], depot: true,
+    what: ['Four walls of bags round the depot, waist-high', 'Eight walls, all the way round'] },
+  { id: 'wire', name: 'CONCERTINA WIRE', cost: [700, 1400], depot: true,
+    what: ['Three coils across the approaches: they wade, and bleed', 'Six coils'] },
+  { id: 'mg', name: 'MOUNTED GUN', cost: [2500], depot: true,
+    what: ['An M240 on a tripod behind a shield, at the depot; [E] to man it'] },
 ];
+
+/** Whether the depot's kit is on the shelf: from the eve of Act III until the convoy is out. */
+export function depotOnShelf(game) {
+  return game.wave >= 8 && !game.op?.complete;
+}
+
+/** The items on the shelf now, in order: what the number keys buy. */
+export function shelf(game) {
+  return ITEMS.filter((i) => !i.depot || depotOnShelf(game));
+}
+
+/** The keys that buy the shelf's items, first to last, and what each is labelled. */
+const KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus'];
+const LABEL = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
 
 /** A fresh run's kit: no tiers of anything. */
 export function freshKit() {
-  return { armour: 0, mags: 0, optics: 0, rifling: 0, pouch: 0, dmr: 0 };
+  return { armour: 0, mags: 0, optics: 0, rifling: 0, pouch: 0, dmr: 0, sandbags: 0, wire: 0, mg: 0 };
 }
 
 /** What the next purchase of an item costs, or null when it is maxed out. */
@@ -73,6 +95,7 @@ export function priceOf(kit, item) {
 export function buy(game, id) {
   const item = ITEMS.find((i) => i.id === id);
   if (!item) return false;
+  if (item.depot && !depotOnShelf(game)) return false;
   const price = priceOf(game.kit, item);
   if (price === null || game.scrip < price) return false;
   if (id === 'medkit' && game.player.health >= game.player.maxHealth) return false;
@@ -112,8 +135,8 @@ export class ArmouryScreen {
     addEventListener('keydown', (e) => {
       if (game.state !== 'armoury') return;
       if (e.code === 'KeyB' || e.code === 'Escape') { e.preventDefault(); game.closeArmoury(); return; }
-      const n = /^Digit(\d)$/.exec(e.code);
-      if (n && ITEMS[+n[1] - 1]) this.purchase(ITEMS[+n[1] - 1].id);
+      const k = KEYS.indexOf(e.code), items = shelf(game);
+      if (k >= 0 && items[k]) this.purchase(items[k].id);
     });
   }
 
@@ -125,7 +148,7 @@ export class ArmouryScreen {
   render() {
     const g = this.game;
     this.scrip.textContent = `SCRIP ${g.scrip.toLocaleString()}`;
-    this.list.innerHTML = ITEMS.map((item, i) => {
+    this.list.innerHTML = shelf(g).map((item, i) => {
       const price = priceOf(g.kit, item);
       const owned = item.repeat ? 0 : g.kit[item.id];
       const maxed = price === null;
@@ -133,7 +156,7 @@ export class ArmouryScreen {
       const pips = item.repeat ? '' : item.cost.map((_, k) => `<i class="${k < owned ? 'on' : ''}"></i>`).join('');
       const cant = maxed || g.scrip < price || (item.id === 'medkit' && g.player.health >= g.player.maxHealth);
       return `<button class="shelf${cant ? ' cant' : ''}" data-item="${item.id}">` +
-        `<span class="key">${i + 1}</span>` +
+        `<span class="key">${LABEL[i] ?? ''}</span>` +
         `<span class="name">${item.name}<span class="pips">${pips}</span></span>` +
         `<span class="what">${maxed ? 'Fully fitted' : what}</span>` +
         `<span class="price">${maxed ? '—' : price.toLocaleString()}</span></button>`;

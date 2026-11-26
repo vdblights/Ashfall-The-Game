@@ -153,6 +153,7 @@ scale had no initial value.
 | `F` / `V` | Melee bash |
 | `E` (tap) | Get into or out of the pickup, or open or close a door in front of you |
 | `W` `S` / `A` `D` / `Space` (in the pickup) | Drive / steer / brake |
+| `E` (tap, at the depot's gun) | Man the mounted gun, or get off it; mouse traverses, fire in bursts |
 | `L` | Weapon light — it lights the street, and you |
 | `B` | Armoury — between waves, with the sector clear |
 | `M` | Mute |
@@ -333,6 +334,9 @@ waits while you shop. It sells:
 | Resupply | — | Every weapon to full ammunition, and two frags |
 | Field dressing | — | Back to full health |
 | M110 marksman rifle | — | A scoped rifle on `5`: one body shot drops a scavenger, one to the head drops most things |
+| Sandbags | 2 | From wave 8: four, then eight waist-high walls round the depot for the convoy |
+| Concertina wire | 2 | From wave 8: three, then six coils across the depot's approaches |
+| Mounted gun | — | From wave 8: an M240 on a tripod behind a shield, at the depot |
 
 It is paid for in scrip, which every point you score earns and which shows
 under your score. Spending it costs no score, so buying armour is never a
@@ -361,6 +365,23 @@ or your muzzle has flashed in the last second and a half, and then it sees
 you as well as it ever does. Leave it off and move, put it on to find them
 and take it off again, and choose your shots. Night lifts when the sector is
 clear.
+
+## Holding the depot
+
+From wave 8, the start of Act III, the armoury also sells the defence of the
+depot the convoy comes for on wave 12. Nothing of it stands until the convoy
+does: when it rolls, what you bought goes up round the depot, facing the
+most open street. **Sandbags** are walls a body stops at and a round stops
+in, waist-high, so you fire over them and a hostile behind one has only its
+head and shoulders to give you. **Wire** is coils laid across the
+approaches: anything that wades into one moves at a third of its pace and is
+cut while it is in it, and a hostile the wire finishes counts as your kill.
+The **mounted gun** stands behind its shield a couple of metres out from the
+depot: `E` beside it puts you on it, the mouse traverses it through a fixed
+arc, and it fires as fast as you hold the trigger until the barrel is too
+hot, and then not until it has cooled. The shield takes most of what comes
+at you from in front of it and nothing from behind. When the convoy is out,
+or lost, the depot is struck, and a new run starts with nothing bought.
 
 ## The operation
 
@@ -807,6 +828,7 @@ src/grenades.js     thrown frags: fuse, bounce physics, detonation
 src/barrels.js      fire barrels: shot, fused, blown, chained, left a stump
 src/glass.js        the panes still in the windows, and their shards
 src/night.js        night waves: the dark, and the light on your gun
+src/depot.js        the depot's defence: sandbags, wire and the mounted gun
 src/effects.js      pooled tracers, impacts, blood, casings, explosions
 src/textures.js     canvas-painted textures (asphalt, facades, rust, cloth, sky)
 src/shapes.js       chamfers, lofts, side profiles, lathes, creased normals, merging

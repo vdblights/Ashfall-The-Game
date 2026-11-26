@@ -176,8 +176,11 @@ export class HUD {
     // a door in reach, when nothing about the gun needs saying, and the
     // pickup; at the wheel it is all the hint there is, and no crosshair
     if (!hint && game.doorHint) hint = game.doorHint;
-    const driving = !!p.vehicle;
+    // behind the depot's gun the crosshair is its sight, and its hint is all
+    const driving = !!p.vehicle && !p.vehicle.gun;
+    const gunning = !!p.vehicle?.gun;
     if (game.truck?.hint && (driving || !hint)) hint = game.truck.hint;
+    if (game.depot?.hint && (gunning || !hint)) hint = game.depot.hint;
     this._flag(this.el.crosshair, 'hidden', driving);
     if (hint !== this._hint) {      // this runs every frame; do not churn the DOM
       this._hint = hint;

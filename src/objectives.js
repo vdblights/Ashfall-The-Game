@@ -258,6 +258,7 @@ export class ObjectiveSystem {
     this.group.visible = true;
     this.ring.scale.set(def.radius, def.radius, 1);
     this.column.scale.set(def.column, 1, def.column);
+    this.column.visible = true;
     this.ringMat.color.setHex(def.colour);
     this.columnMat.color.setHex(def.colour);
     this.glowMat.color.setHex(def.colour);
@@ -265,6 +266,12 @@ export class ObjectiveSystem {
 
     if (kind === 'hunt') this.spawnHunt(a, site);
     if (kind === 'rescue') this.spawnHoldout(a, site);
+    // what the armoury sold for the depot goes up round it (`depot.js`)
+    if (kind === 'convoy' && g.depot) {
+      a.fortified = g.depot.raise(site);
+      // the sign across the way the depot faces, so its posts stand behind the gun
+      this.props.convoy.rotation.y = g.depot.facing;
+    }
 
     audio.objectiveStart();
     g.hud.banner(def.label, def.brief);
@@ -637,6 +644,7 @@ export class ObjectiveSystem {
   release(a, secured) {
     const g = this.game;
     if (a.kind === 'sabotage') g.lure = null;
+    if (a.kind === 'convoy') g.depot?.strike();
     if (a.kind === 'hunt' && !secured) this.remove(a.target);
     if (a.kind === 'rescue' && a.target?.alive) this.remove(a.target);
   }
@@ -655,6 +663,8 @@ export class ObjectiveSystem {
     const prop = this.props[a.kind];
     if (a.kind === 'relay' || a.kind === 'convoy') {
       prop.position.y = 0;                 // a mast stands; only the light breathes
+      // behind the depot's gun the column is all round you; it goes while you are
+      this.column.visible = !(a.kind === 'convoy' && this.game.player.vehicle?.gun);
     } else {
       prop.rotation.y = t * 0.6;
       prop.position.y = Math.sin(t * 1.7) * 0.05;
